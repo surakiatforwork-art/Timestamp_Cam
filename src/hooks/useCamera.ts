@@ -6,6 +6,8 @@ import { Camera } from '@capacitor/camera';
 export function useCamera() {
     const { state, dispatch, showToast, videoRef } = useApp();
     const streamRef = useRef<MediaStream | null>(null);
+    const shouldRefreshOnResumeRef = useRef(false);
+    const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const { cameraOn, facingMode, torchOn, cameraStatus } = state;
 
@@ -127,6 +129,41 @@ export function useCamera() {
             if (streamRef.current) {
                 streamRef.current.getTracks().forEach((t) => t.stop());
             }
+        };
+    }, [cameraOn, startCamera, stopCamera]);
+
+    // Android can suspend a WebView's camera track while leaving its last frame on-screen.
+    // Tear down that stale stream and reacquire it after the activity returns to foreground.
+    useEffect(() => {
+        const markSuspended = () => {
+            if (!cameraOn) return;
+            shouldRefreshOnResumeRef.current = true;
+            stopCamera();
+        };
+        const refreshAfterResume = () => {
+            if (!cameraOn || !shouldRefreshOnResumeRef.current) return;
+            shouldRefreshOnResumeRef.current = false;
+            if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+            resumeTimerRef.current = setTimeout(() => {
+                startCamera();
+            }, 250);
+        };
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'hidden') markSuspended();
+            else refreshAfterResume();
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('native-app-pause', markSuspended);
+        window.addEventListener('native-app-resume', refreshAfterResume);
+        window.addEventListener('pageshow', refreshAfterResume);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('native-app-pause', markSuspended);
+            window.removeEventListener('native-app-resume', refreshAfterResume);
+            window.removeEventListener('pageshow', refreshAfterResume);
+            if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
         };
     }, [cameraOn, startCamera, stopCamera]);
 

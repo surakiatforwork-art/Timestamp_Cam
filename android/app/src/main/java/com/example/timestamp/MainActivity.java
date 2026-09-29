@@ -45,6 +45,34 @@ public class MainActivity extends BridgeActivity {
         // Configure WebView after bridge is ready
         configureWebView();
     }
+
+    @Override
+    public void onPause() {
+        emitWebLifecycleEvent("native-app-pause");
+        super.onPause();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // Wait until the activity and WebView are foregrounded before React reacquires MediaStream.
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().postDelayed(
+                () -> emitWebLifecycleEvent("native-app-resume"),
+                250
+            );
+        }
+    }
+
+    private void emitWebLifecycleEvent(String eventName) {
+        if (getBridge() == null || getBridge().getWebView() == null) {
+            return;
+        }
+        getBridge().getWebView().evaluateJavascript(
+            "window.dispatchEvent(new Event('" + eventName + "'));",
+            null
+        );
+    }
     
     private void requestRequiredPermissions() {
         List<String> permissionsNeeded = new ArrayList<>();
