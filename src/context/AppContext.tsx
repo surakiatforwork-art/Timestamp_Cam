@@ -1,7 +1,12 @@
 import { createContext, useContext, useReducer, useEffect, type ReactNode, useCallback, useRef } from 'react';
-import type { Photo, Settings, ToastMessage, CameraStatus, ModalType, PhotoRecord } from '../types';
+import type { Photo, Settings, ToastMessage, CameraStatus, ModalType, PhotoRecord, TrashPhoto } from '../types';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS, resetSettings as resetSettingsStorage } from '../lib/settings';
-import { getAllPhotos, addPhoto as addPhotoDB, deletePhoto as deletePhotoDB, deleteAllPhotos as deleteAllPhotosDB, updatePhoto as updatePhotoDB } from '../lib/db';
+import {
+    getAllPhotos, addPhoto as addPhotoDB, updatePhoto as updatePhotoDB, getAllTrash,
+    movePhotoToTrash as movePhotoToTrashDB, moveAllPhotosToTrash as moveAllPhotosToTrashDB,
+    restoreTrashPhotos as restoreTrashPhotosDB, permanentlyDeleteTrashPhotos, clearTrash as clearTrashDB,
+    purgeExpiredTrash,
+} from '../lib/db';
 import { generateId } from '../lib/format';
 import { log } from '../lib/logger';
 
@@ -17,6 +22,7 @@ interface AppState {
 
     // Photos
     photos: Photo[];
+    trashPhotos: TrashPhoto[];
 
     // Settings
     settings: Settings;
@@ -30,6 +36,7 @@ interface AppState {
 
     // Download progress
     downloadProgress: { current: number; total: number } | null;
+    importProgress: { current: number; total: number } | null;
 }
 
 // Actions
@@ -41,6 +48,8 @@ type Action =
     | { type: 'SET_HAS_TORCH'; payload: boolean }
     | { type: 'SET_CAMERA_STATUS'; payload: CameraStatus }
     | { type: 'SET_PHOTOS'; payload: Photo[] }
+    | { type: 'SET_TRASH_PHOTOS'; payload: TrashPhoto[] }
+    | { type: 'REMOVE_TRASH_PHOTOS'; payload: string[] }
     | { type: 'ADD_PHOTO'; payload: Photo }
     | { type: 'UPDATE_PHOTO'; payload: { id: string; updates: Partial<Photo> } }
     | { type: 'DELETE_PHOTO'; payload: string }
@@ -51,7 +60,8 @@ type Action =
     | { type: 'SET_PREVIEW_PHOTO_ID'; payload: string | null }
     | { type: 'ADD_TOAST'; payload: ToastMessage }
     | { type: 'REMOVE_TOAST'; payload: string }
-    | { type: 'SET_DOWNLOAD_PROGRESS'; payload: { current: number; total: number } | null };
+    | { type: 'SET_DOWNLOAD_PROGRESS'; payload: { current: number; total: number } | null }
+    | { type: 'SET_IMPORT_PROGRESS'; payload: { current: number; total: number } | null };
 
 // Initial state
 const initialState: AppState = {
@@ -62,11 +72,13 @@ const initialState: AppState = {
     hasTorch: false,
     cameraStatus: 'off',
     photos: [],
+    trashPhotos: [],
     settings: loadSettings(),
     activeModal: 'none',
     previewPhotoId: null,
     toasts: [],
     downloadProgress: null,
+    importProgress: null,
 };
 
 // Reducer
@@ -86,6 +98,10 @@ function appReducer(state: AppState, action: Action): AppState {
             return { ...state, cameraStatus: action.payload };
         case 'SET_PHOTOS':
             return { ...state, photos: action.payload };
+        case 'SET_TRASH_PHOTOS':
+            return { ...state, trashPhotos: action.payload };
+        case 'REMOVE_TRASH_PHOTOS':
+            return { ...state, trashPhotos: state.trashPhotos.filter((photo) => !action.payload.includes(photo.id)) };
         case 'ADD_PHOTO':
             return { ...state, photos: [...state.photos, action.payload] };
         case 'UPDATE_PHOTO':
@@ -120,6 +136,8 @@ function appReducer(state: AppState, action: Action): AppState {
             return { ...state, toasts: state.toasts.filter((t) => t.id !== action.payload) };
         case 'SET_DOWNLOAD_PROGRESS':
             return { ...state, downloadProgress: action.payload };
+        case 'SET_IMPORT_PROGRESS':
+            return { ...state, importProgress: action.payload };
         default:
             return state;
     }
@@ -134,6 +152,9 @@ interface AppContextType {
     updatePhoto: (id: string, updates: Partial<PhotoRecord>) => Promise<void>;
     deletePhoto: (id: string) => Promise<void>;
     deleteAllPhotos: () => Promise<void>;
+    restoreTrashPhotos: (ids: string[]) => Promise<number>;
+    permanentlyDeleteTrashPhotos: (ids: string[]) => Promise<void>;
+    clearTrash: () => Promise<void>;
     showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
     openPreview: (photoId: string) => void;
     closeModal: () => void;
@@ -151,13 +172,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         async function loadPhotos() {
             try {
-                const records = await getAllPhotos();
+                await purgeExpiredTrash();
+                const [records, trashRecords] = await Promise.all([getAllPhotos(), getAllTrash()]);
                 const photos: Photo[] = records.map((r) => {
                     const thumbUrl = URL.createObjectURL(r.baseBlob);
                     objectUrlsRef.current.set(r.id, thumbUrl);
                     return { ...r, thumbUrl };
                 });
+                const trashPhotos: TrashPhoto[] = trashRecords.map((r) => {
+                    const thumbUrl = URL.createObjectURL(r.baseBlob);
+                    objectUrlsRef.current.set(r.id, thumbUrl);
+                    return { ...r, thumbUrl };
+                });
                 dispatch({ type: 'SET_PHOTOS', payload: photos });
+                dispatch({ type: 'SET_TRASH_PHOTOS', payload: trashPhotos });
                 log(`Loaded ${photos.length} photos from storage`);
             } catch (e) {
                 log(`Failed to load photos: ${e}`, 'error');
@@ -169,6 +197,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return () => {
             objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
         };
+    }, []);
+
+    // Also expire old items while the app remains open for a long time.
+    useEffect(() => {
+        const removeExpired = async () => {
+            const ids = await purgeExpiredTrash();
+            if (!ids.length) return;
+            ids.forEach((id) => {
+                const url = objectUrlsRef.current.get(id);
+                if (url) URL.revokeObjectURL(url);
+                objectUrlsRef.current.delete(id);
+            });
+            dispatch({ type: 'REMOVE_TRASH_PHOTOS', payload: ids });
+            log(`Permanently removed ${ids.length} expired trash photo(s)`);
+        };
+        const timer = window.setInterval(removeExpired, 6 * 60 * 60 * 1000);
+        return () => window.clearInterval(timer);
     }, []);
 
     // Add photo
@@ -186,26 +231,65 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'UPDATE_PHOTO', payload: { id, updates } });
     }, []);
 
-    // Delete photo
+    // Move photo to local trash rather than deleting it immediately.
     const deletePhoto = useCallback(async (id: string) => {
-        const url = objectUrlsRef.current.get(id);
-        if (url) {
-            URL.revokeObjectURL(url);
-            objectUrlsRef.current.delete(id);
-        }
-        await deletePhotoDB(id);
+        const trashed = await movePhotoToTrashDB(id);
+        if (!trashed) return;
+        const existing = state.photos.find((photo) => photo.id === id);
         dispatch({ type: 'DELETE_PHOTO', payload: id });
-        log(`Photo deleted: ${id}`);
-    }, []);
+        if (existing) {
+            dispatch({
+                type: 'SET_TRASH_PHOTOS',
+                payload: [{ ...trashed, thumbUrl: existing.thumbUrl }, ...state.trashPhotos],
+            });
+        }
+        log(`Photo moved to trash: ${id}`);
+    }, [state.photos, state.trashPhotos]);
 
     // Delete all photos
     const deleteAllPhotos = useCallback(async () => {
-        objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-        objectUrlsRef.current.clear();
-        await deleteAllPhotosDB();
+        const trashed = await moveAllPhotosToTrashDB();
+        const photoById = new Map(state.photos.map((photo) => [photo.id, photo]));
+        const trashPhotos = trashed.map((photo) => ({ ...photo, thumbUrl: photoById.get(photo.id)?.thumbUrl ?? URL.createObjectURL(photo.baseBlob) }));
         dispatch({ type: 'DELETE_ALL_PHOTOS' });
-        log('All photos deleted');
-    }, []);
+        dispatch({ type: 'SET_TRASH_PHOTOS', payload: [...trashPhotos, ...state.trashPhotos] });
+        log('All photos moved to trash');
+    }, [state.photos, state.trashPhotos]);
+
+    const restoreTrashPhotos = useCallback(async (ids: string[]): Promise<number> => {
+        const restored = await restoreTrashPhotosDB(ids);
+        if (!restored.length) return 0;
+        const trashById = new Map(state.trashPhotos.map((photo) => [photo.id, photo]));
+        const restoredPhotos: Photo[] = restored.map((photo) => ({
+            ...photo,
+            thumbUrl: trashById.get(photo.id)?.thumbUrl ?? URL.createObjectURL(photo.baseBlob),
+        }));
+        dispatch({ type: 'SET_PHOTOS', payload: [...state.photos, ...restoredPhotos] });
+        dispatch({ type: 'SET_TRASH_PHOTOS', payload: state.trashPhotos.filter((photo) => !ids.includes(photo.id)) });
+        return restoredPhotos.length;
+    }, [state.photos, state.trashPhotos]);
+
+    const deleteTrashPhotos = useCallback(async (ids: string[]) => {
+        await permanentlyDeleteTrashPhotos(ids);
+        ids.forEach((id) => {
+            const url = objectUrlsRef.current.get(id);
+            if (url) {
+                URL.revokeObjectURL(url);
+                objectUrlsRef.current.delete(id);
+            }
+        });
+        dispatch({ type: 'SET_TRASH_PHOTOS', payload: state.trashPhotos.filter((photo) => !ids.includes(photo.id)) });
+    }, [state.trashPhotos]);
+
+    const clearTrash = useCallback(async () => {
+        await clearTrashDB();
+        state.trashPhotos.forEach((photo) => {
+            const url = objectUrlsRef.current.get(photo.id);
+            if (url) URL.revokeObjectURL(url);
+            objectUrlsRef.current.delete(photo.id);
+        });
+        dispatch({ type: 'SET_TRASH_PHOTOS', payload: [] });
+    }, [state.trashPhotos]);
 
     // Show toast
     const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -237,6 +321,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 updatePhoto,
                 deletePhoto,
                 deleteAllPhotos,
+                restoreTrashPhotos,
+                permanentlyDeleteTrashPhotos: deleteTrashPhotos,
+                clearTrash,
                 showToast,
                 openPreview,
                 closeModal,

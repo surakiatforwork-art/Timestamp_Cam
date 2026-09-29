@@ -1,19 +1,20 @@
 import type { Photo, Settings } from '../types';
 import { renderPhotoToBlob } from './canvas';
 import { generateFilename } from './format';
-import { Filesystem, Directory } from '@capacitor/filesystem';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+
+interface MediaStorePlugin {
+    saveImage(options: { data: string; displayName: string; mimeType: string }): Promise<{ uri: string }>;
+}
+
+const MediaStore = registerPlugin<MediaStorePlugin>('MediaStore');
 
 // Write to native filesystem
 async function saveToNative(blob: Blob, filename: string): Promise<string> {
     try {
         const base64 = await blobToBase64(blob);
-        const result = await Filesystem.writeFile({
-            path: filename,
-            data: base64,
-            directory: Directory.Documents,
-            recursive: true
-        });
+        const mimeType = blob.type || (filename.endsWith('.png') ? 'image/png' : 'image/jpeg');
+        const result = await MediaStore.saveImage({ data: base64, displayName: filename, mimeType });
         return result.uri;
     } catch (e) {
         throw new Error(`Native save failed: ${e}`);
@@ -87,12 +88,19 @@ export async function downloadAll(
     // Tier 1: Capacitor Filesystem (Native)
     if (Capacitor.isNativePlatform()) {
         try {
-            for (let i = 0; i < total; i++) {
-                const blob = await renderPhotoToBlob(photos[i], settings, format, quality);
-                const filename = generateFilename(i, format);
-                await saveToNative(blob, `Timestamp/${filename}`); // Save to Timestamp subfolder
-                onProgress(i + 1, total);
-            }
+            let nextIndex = 0;
+            let completed = 0;
+            const worker = async () => {
+                while (nextIndex < total) {
+                    const index = nextIndex++;
+                    const blob = await renderPhotoToBlob(photos[index], settings, format, quality);
+                    await saveToNative(blob, generateFilename(index, format));
+                    completed++;
+                    onProgress(completed, total);
+                }
+            };
+            // Two jobs reduces total wait while keeping large canvas buffers bounded on mobile.
+            await Promise.all(Array.from({ length: Math.min(2, total) }, worker));
             return { method: 'native-filesystem', success: true };
         } catch (e) {
             console.error('Native save failed:', e);

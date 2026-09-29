@@ -1,5 +1,46 @@
-import type { Photo, Settings } from '../types';
-import { formatTimestamp } from './format';
+import type { OverlayFontFamily, Photo, Settings, TimestampFormat } from '../types';
+import { formatDMS, formatTimestamp } from './format';
+
+const OVERLAY_FONT_STACKS: Record<OverlayFontFamily, string> = {
+    'android-ui': '"Roboto", "Timestamp Noto Sans Thai UI", "Noto Sans Thai UI", sans-serif',
+    'noto-thai-ui': '"Timestamp Noto Sans Thai UI", "Noto Sans Thai UI", sans-serif',
+    'noto-thai-looped-ui': '"Timestamp Noto Sans Thai Looped UI", "Noto Sans Thai Looped UI", sans-serif',
+    'system-sans': 'system-ui, -apple-system, "Segoe UI", sans-serif',
+};
+
+function getOverlayFontStack(fontFamily: OverlayFontFamily): string {
+    return OVERLAY_FONT_STACKS[fontFamily] ?? OVERLAY_FONT_STACKS['android-ui'];
+}
+
+function getBundledFontFamily(fontFamily: OverlayFontFamily): string | null {
+    switch (fontFamily) {
+        case 'android-ui':
+        case 'noto-thai-ui':
+            return 'Timestamp Noto Sans Thai UI';
+        case 'noto-thai-looped-ui':
+            return 'Timestamp Noto Sans Thai Looped UI';
+        default:
+            return null;
+    }
+}
+
+async function ensureOverlayFontReady(
+    fontSize: number,
+    fontFamily: OverlayFontFamily,
+    fontWeight: number
+): Promise<void> {
+    if (!document.fonts?.load) return;
+
+    const bundledFontFamily = getBundledFontFamily(fontFamily);
+    if (!bundledFontFamily) return;
+
+    try {
+        await document.fonts.load(`${fontWeight} ${Math.max(1, Math.round(fontSize))}px "${bundledFontFamily}"`);
+        await document.fonts.ready;
+    } catch {
+        // Canvas will fall back to the remaining font stack if the bundled font cannot load.
+    }
+}
 
 // Calculate crop region for object-fit: cover
 export function calculateCoverCrop(
@@ -32,7 +73,7 @@ export function calculateCoverCrop(
 // Build overlay text lines
 export function buildOverlayLines(
     timeValueISO: string,
-    format: 'thai-verbose' | 'iso',
+    format: TimestampFormat,
     locationEnabled: boolean,
     showLatLng: boolean,
     showAddress: boolean,
@@ -50,7 +91,7 @@ export function buildOverlayLines(
 
     if (locationEnabled) {
         if (showLatLng && lat !== null && lng !== null) {
-            lines.push(`${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+            lines.push(format === 'sample-overlay' ? formatDMS(lat, lng) : `${lat.toFixed(6)}, ${lng.toFixed(6)}`);
         }
         if (showAddress && address) {
             // Split long addresses
@@ -77,47 +118,63 @@ export function renderOverlay(
     canvasW: number,
     canvasH: number,
     lines: string[],
-    position: 'TR' | 'TL' | 'BR' | 'BL',
+    position: 'TR' | 'TC' | 'TL' | 'BR' | 'BC' | 'BL',
     padding: number,
-    fontSize: number
+    fontSize: number,
+    fontFamily: OverlayFontFamily,
+    fontWeight: number,
+    strokeWidth: number,
+    fontHeightScale: number
 ): void {
     ctx.save();
 
     // Font setup
-    ctx.font = `900 ${fontSize}px "Noto Sans Thai", sans-serif`;
+    ctx.font = `${fontWeight} ${fontSize}px ${getOverlayFontStack(fontFamily)}`;
 
     // Calculate text dimensions
-    const lineHeight = fontSize * 1.3;
+    const heightScale = Math.max(0.5, fontHeightScale);
+    const lineHeight = fontSize * 1.3 * heightScale;
     const textHeight = lines.length * lineHeight;
 
     // Position calculation
     const isRight = position.includes('R');
+    const isCenter = position.includes('C');
     const isBottom = position.includes('B');
 
-    ctx.textAlign = isRight ? 'right' : 'left';
+    ctx.textAlign = isCenter ? 'center' : isRight ? 'right' : 'left';
     ctx.textBaseline = 'top';
 
-    const textX = isRight ? canvasW - padding : padding;
+    const textX = isCenter ? canvasW / 2 : isRight ? canvasW - padding : padding;
     const startY = isBottom ? canvasH - padding - textHeight : padding;
 
     // Shadow settings
-    ctx.shadowColor = 'rgba(0,0,0,0.9)';
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 2;
+    ctx.shadowColor = 'rgba(0,0,0,0.75)';
+    ctx.shadowBlur = Math.max(1, strokeWidth * 1.2);
+    ctx.shadowOffsetX = Math.max(0.5, strokeWidth * 0.55);
+    ctx.shadowOffsetY = Math.max(0.5, strokeWidth * 0.55);
 
     lines.forEach((line, i) => {
         const lineY = startY + i * lineHeight;
 
         // Stroke (outline)
-        ctx.strokeStyle = 'rgba(0,0,0,0.95)';
-        ctx.lineWidth = fontSize / 6;
-        ctx.lineJoin = 'round';
-        ctx.strokeText(line, textX, lineY);
+        if (strokeWidth > 0) {
+            ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+            ctx.lineWidth = strokeWidth;
+            ctx.lineJoin = 'round';
+            ctx.save();
+            ctx.translate(textX, lineY);
+            ctx.scale(1, heightScale);
+            ctx.strokeText(line, 0, 0);
+            ctx.restore();
+        }
 
         // Fill (white text)
         ctx.fillStyle = '#FFFFFF';
-        ctx.fillText(line, textX, lineY);
+        ctx.save();
+        ctx.translate(textX, lineY);
+        ctx.scale(1, heightScale);
+        ctx.fillText(line, 0, 0);
+        ctx.restore();
     });
 
     ctx.restore();
@@ -247,9 +304,9 @@ export async function renderPhotoToCanvas(
         settings.locationEnabled,
         settings.showLatLng,
         settings.showAddress,
-        settings.latitude,
-        settings.longitude,
-        settings.cachedAddress
+        photo.locationLatitude ?? settings.latitude,
+        photo.locationLongitude ?? settings.longitude,
+        photo.locationAddress ?? settings.cachedAddress
     );
 
     // Calculate font size based on output size (not preview size)
@@ -261,6 +318,8 @@ export async function renderPhotoToCanvas(
         settings.fontFixedPx
     ) * scale;
 
+    await ensureOverlayFontReady(fontSize, settings.overlayFontFamily, settings.overlayFontWeight);
+
     // Render overlay
     renderOverlay(
         ctx,
@@ -269,7 +328,11 @@ export async function renderPhotoToCanvas(
         lines,
         settings.overlayPosition,
         settings.overlayPadding * scale,
-        fontSize
+        fontSize,
+        settings.overlayFontFamily,
+        settings.overlayFontWeight,
+        settings.overlayStrokeWidth * scale,
+        settings.overlayFontHeightScale
     );
 
     return canvas;

@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { captureFromVideo, processImportedImage } from '../lib/canvas';
 import { generateId } from '../lib/format';
@@ -6,8 +6,10 @@ import { log } from '../lib/logger';
 import type { PhotoRecord } from '../types';
 
 export function useCapture() {
-    const { state, addPhoto, showToast } = useApp();
+    const { state, dispatch, addPhoto, showToast } = useApp();
     const lastVfDimensions = useRef({ width: 0, height: 0 });
+    const captureInFlightRef = useRef(false);
+    const [isCapturing, setIsCapturing] = useState(false);
 
     // Update viewfinder dimensions (called from Stage)
     const updateViewfinderDimensions = useCallback((width: number, height: number) => {
@@ -17,6 +19,10 @@ export function useCapture() {
     // Capture from camera
     const capturePhoto = useCallback(
         async (video: HTMLVideoElement) => {
+            if (captureInFlightRef.current) return;
+            captureInFlightRef.current = true;
+            setIsCapturing(true);
+            navigator.vibrate?.(35);
             const { width: vfWidth, height: vfHeight } = lastVfDimensions.current;
 
             // Fallback to video dimensions if viewfinder not set
@@ -56,6 +62,9 @@ export function useCapture() {
             } catch (e) {
                 log(`Capture failed: ${e}`, 'error');
                 showToast('ถ่ายรูปไม่สำเร็จ', 'error');
+            } finally {
+                captureInFlightRef.current = false;
+                setIsCapturing(false);
             }
         },
         [state.facingMode, state.settings, addPhoto, showToast]
@@ -68,11 +77,15 @@ export function useCapture() {
             log(`Importing ${fileArray.length} files`);
 
             let successCount = 0;
+            let completedCount = 0;
+            dispatch({ type: 'SET_IMPORT_PROGRESS', payload: { current: 0, total: fileArray.length } });
 
-            for (const file of fileArray) {
+            const processFile = async (file: File) => {
                 if (!file.type.startsWith('image/')) {
                     log(`Skipping non-image: ${file.name}`, 'warn');
-                    continue;
+                    completedCount++;
+                    dispatch({ type: 'SET_IMPORT_PROGRESS', payload: { current: completedCount, total: fileArray.length } });
+                    return;
                 }
 
                 try {
@@ -98,8 +111,21 @@ export function useCapture() {
                     successCount++;
                 } catch (e) {
                     log(`Import failed for ${file.name}: ${e}`, 'error');
+                } finally {
+                    completedCount++;
+                    dispatch({ type: 'SET_IMPORT_PROGRESS', payload: { current: completedCount, total: fileArray.length } });
                 }
-            }
+            };
+
+            let nextIndex = 0;
+            const worker = async () => {
+                while (nextIndex < fileArray.length) {
+                    const file = fileArray[nextIndex++];
+                    await processFile(file);
+                }
+            };
+            await Promise.all(Array.from({ length: Math.min(2, fileArray.length) }, worker));
+            dispatch({ type: 'SET_IMPORT_PROGRESS', payload: null });
 
             if (successCount > 0) {
                 showToast(`นำเข้า ${successCount} รูปแล้ว`, 'success');
@@ -107,12 +133,13 @@ export function useCapture() {
                 showToast('นำเข้ารูปไม่สำเร็จ', 'error');
             }
         },
-        [state.settings, addPhoto, showToast]
+        [state.settings, dispatch, addPhoto, showToast]
     );
 
     return {
         capturePhoto,
         importPhotos,
         updateViewfinderDimensions,
+        isCapturing,
     };
 }

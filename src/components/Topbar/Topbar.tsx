@@ -97,6 +97,13 @@ export default function Topbar() {
             </div>
 
             <div className="topbar-right">
+                <button
+                    className="icon-btn"
+                    onClick={() => dispatch({ type: 'SET_ACTIVE_MODAL', payload: 'trash' })}
+                    title="ถังขยะ"
+                >
+                    🗑️
+                </button>
                 {/* Torch */}
                 <button
                     className={`icon-btn ${torchOn ? 'active' : ''}`}
@@ -111,9 +118,10 @@ export default function Topbar() {
                 <button
                     className="icon-btn"
                     onClick={handleImport}
-                    title="นำเข้ารูป"
+                    disabled={state.importProgress !== null}
+                    title={state.importProgress ? `กำลังนำเข้า ${state.importProgress.current}/${state.importProgress.total}` : 'นำเข้ารูป'}
                 >
-                    📥
+                    {state.importProgress ? '⏳' : '📥'}
                 </button>
 
 

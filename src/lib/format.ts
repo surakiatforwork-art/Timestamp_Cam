@@ -1,7 +1,12 @@
+import type { TimestampFormat } from '../types';
+
 // Format date/time according to selected format
-export function formatTimestamp(date: Date, format: 'thai-verbose' | 'iso'): string {
+export function formatTimestamp(date: Date, format: TimestampFormat): string {
     if (format === 'iso') {
         return formatISO(date);
+    }
+    if (format === 'sample-overlay') {
+        return formatSampleOverlay(date);
     }
     return formatThaiVerbose(date);
 }
@@ -34,6 +39,39 @@ function formatISO(date: Date): string {
     return `${y}-${mo}-${d} ${h}:${m}:${s}`;
 }
 
+function formatSampleOverlay(date: Date): string {
+    const thaiShortMonths = [
+        'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+        'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+    ];
+
+    const d = date.getDate();
+    const month = thaiShortMonths[date.getMonth()];
+    const y = date.getFullYear();
+    const h = date.getHours();
+    const m = date.getMinutes();
+    const s = date.getSeconds();
+
+    return `${d} ${month} ${y} ${h} นาฬิกา ${m} นาที ${s} วินาที GMT+07:00`;
+}
+
+export function formatDMS(lat: number, lng: number): string {
+    return `${formatDMSPart(lat, 'lat')} ${formatDMSPart(lng, 'lng')}`;
+}
+
+function formatDMSPart(value: number, axis: 'lat' | 'lng'): string {
+    const direction = axis === 'lat'
+        ? value >= 0 ? 'N' : 'S'
+        : value >= 0 ? 'E' : 'W';
+    const abs = Math.abs(value);
+    const degrees = Math.floor(abs);
+    const minutesFloat = (abs - degrees) * 60;
+    const minutes = Math.floor(minutesFloat);
+    const seconds = (minutesFloat - minutes) * 60;
+
+    return `${degrees}°${minutes}'${seconds.toFixed(3)}"${direction}`;
+}
+
 // Generate filename for download
 export function generateFilename(index: number, format: 'jpeg' | 'png'): string {
     const now = new Date();
@@ -50,6 +88,22 @@ export function generateFilename(index: number, format: 'jpeg' | 'png'): string 
 // Generate UUID
 export function generateId(): string {
     return crypto.randomUUID();
+}
+
+// datetime-local expects a local wall-clock value, while stored timestamps are UTC ISO strings.
+export function toDateTimeLocalValue(iso: string): string {
+    const date = new Date(iso);
+    const y = date.getFullYear();
+    const mo = (date.getMonth() + 1).toString().padStart(2, '0');
+    const d = date.getDate().toString().padStart(2, '0');
+    const h = date.getHours().toString().padStart(2, '0');
+    const m = date.getMinutes().toString().padStart(2, '0');
+    const s = date.getSeconds().toString().padStart(2, '0');
+    return `${y}-${mo}-${d}T${h}:${m}:${s}`;
+}
+
+export function dateTimeLocalValueToISO(value: string): string {
+    return new Date(value).toISOString();
 }
 
 // Format time summary for display

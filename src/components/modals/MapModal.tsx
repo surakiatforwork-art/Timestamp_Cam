@@ -4,13 +4,16 @@ import { reverseGeocode } from '../../lib/geocoding';
 import 'leaflet/dist/leaflet.css';
 
 export default function MapModal() {
-    const { state, dispatch, showToast } = useApp();
+    const { state, dispatch, updatePhoto, showToast } = useApp();
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<L.Map | null>(null);
     const markerRef = useRef<L.Marker | null>(null);
+    const previewPhoto = state.photos.find((p) => p.id === state.previewPhotoId);
+    const initialLatitude = previewPhoto?.locationLatitude ?? state.settings.latitude;
+    const initialLongitude = previewPhoto?.locationLongitude ?? state.settings.longitude;
 
-    const [selectedLat, setSelectedLat] = useState<number | null>(state.settings.latitude);
-    const [selectedLng, setSelectedLng] = useState<number | null>(state.settings.longitude);
+    const [selectedLat, setSelectedLat] = useState<number | null>(initialLatitude);
+    const [selectedLng, setSelectedLng] = useState<number | null>(initialLongitude);
     const [isLoading, setIsLoading] = useState(false);
 
     // Initialize map
@@ -33,8 +36,8 @@ export default function MapModal() {
 
             if (!isMounted || !mapContainerRef.current) return;
 
-            const initialLat = state.settings.latitude ?? 13.7563;
-            const initialLng = state.settings.longitude ?? 100.5018;
+            const initialLat = initialLatitude ?? 13.7563;
+            const initialLng = initialLongitude ?? 100.5018;
 
             const map = L.map(mapContainerRef.current).setView([initialLat, initialLng], 15);
 
@@ -43,8 +46,8 @@ export default function MapModal() {
             }).addTo(map);
 
             // Add marker if position exists
-            if (state.settings.latitude !== null && state.settings.longitude !== null) {
-                const marker = L.marker([state.settings.latitude, state.settings.longitude]).addTo(map);
+            if (initialLatitude !== null && initialLongitude !== null) {
+                const marker = L.marker([initialLatitude, initialLongitude]).addTo(map);
                 markerRef.current = marker;
             }
 
@@ -96,22 +99,30 @@ export default function MapModal() {
             address = await reverseGeocode(selectedLat, selectedLng);
         }
 
-        dispatch({
-            type: 'SET_SETTINGS',
-            payload: {
-                latitude: selectedLat,
-                longitude: selectedLng,
-                cachedAddress: address,
-            },
-        });
+        if (previewPhoto) {
+            await updatePhoto(previewPhoto.id, {
+                locationLatitude: selectedLat,
+                locationLongitude: selectedLng,
+                locationAddress: address,
+            });
+        } else {
+            dispatch({
+                type: 'SET_SETTINGS',
+                payload: {
+                    latitude: selectedLat,
+                    longitude: selectedLng,
+                    cachedAddress: address,
+                },
+            });
+        }
 
         setIsLoading(false);
         showToast('บันทึกตำแหน่งแล้ว', 'success');
-        dispatch({ type: 'SET_ACTIVE_MODAL', payload: 'settings' });
+        dispatch({ type: 'SET_ACTIVE_MODAL', payload: previewPhoto ? 'preview' : 'settings' });
     };
 
     const handleCancel = () => {
-        dispatch({ type: 'SET_ACTIVE_MODAL', payload: 'settings' });
+        dispatch({ type: 'SET_ACTIVE_MODAL', payload: previewPhoto ? 'preview' : 'settings' });
     };
 
     return (

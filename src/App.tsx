@@ -7,6 +7,7 @@ import Toast from './components/common/Toast';
 import PreviewModal from './components/modals/PreviewModal';
 import SettingsModal from './components/modals/SettingsModal';
 import MapModal from './components/modals/MapModal';
+import TrashModal from './components/modals/TrashModal';
 
 function App() {
     const { state } = useApp();
@@ -22,6 +23,7 @@ function App() {
             {state.activeModal === 'preview' && <PreviewModal />}
             {state.activeModal === 'settings' && <SettingsModal />}
             {state.activeModal === 'map' && <MapModal />}
+            {state.activeModal === 'trash' && <TrashModal />}
         </div>
     );
 }

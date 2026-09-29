@@ -3,11 +3,12 @@ import { useApp } from '../../context/AppContext';
 import { useCamera } from '../../hooks/useCamera';
 import { useCapture } from '../../hooks/useCapture';
 import { formatTimeSummary, formatLocationSummary } from '../../lib/format';
+import { dateTimeLocalValueToISO, toDateTimeLocalValue } from '../../lib/format';
 
 export default function BottomControls() {
     const { state, dispatch, deleteAllPhotos, openPreview, showToast } = useApp();
     const { videoRef, cameraOn, cameraStatus, hasMultipleCameras, switchCamera } = useCamera();
-    const { capturePhoto, importPhotos } = useCapture();
+    const { capturePhoto, importPhotos, isCapturing } = useCapture();
     const galleryRef = useRef<HTMLDivElement>(null);
 
     const { photos, settings } = state;
@@ -51,7 +52,7 @@ export default function BottomControls() {
         settings.cachedAddress
     );
 
-    const canCapture = cameraOn && cameraStatus === 'ready';
+    const canCapture = cameraOn && cameraStatus === 'ready' && !isCapturing;
     const canSwitchCamera = cameraOn && hasMultipleCameras && cameraStatus === 'ready';
 
     return (
@@ -84,11 +85,12 @@ export default function BottomControls() {
                         <span className="meta-label"></span>
                         <input
                             type="datetime-local"
-                            value={settings.globalCustomTime.slice(0, 16)}
+                            value={toDateTimeLocalValue(settings.globalCustomTime)}
+                            step="1"
                             onChange={(e) => {
                                 dispatch({
                                     type: 'SET_SETTINGS',
-                                    payload: { globalCustomTime: new Date(e.target.value).toISOString() },
+                                    payload: { globalCustomTime: dateTimeLocalValueToISO(e.target.value) },
                                 });
                             }}
                             style={{ flex: 1 }}
@@ -132,7 +134,7 @@ export default function BottomControls() {
                 </div>
 
                 <button
-                    className="shutter-btn"
+                    className={`shutter-btn ${isCapturing ? 'is-capturing' : ''}`}
                     onClick={handleCapture}
                     disabled={!canCapture}
                     title="ถ่ายรูป"

@@ -9,10 +9,22 @@ export interface PhotoRecord {
     timeValueISO: string;
     sourceName: string;
     fromFrontMirror: boolean;
+    locationLatitude?: number | null;
+    locationLongitude?: number | null;
+    locationAddress?: string | null;
 }
 
 // Runtime photo with object URL
 export interface Photo extends PhotoRecord {
+    thumbUrl: string;
+}
+
+// A removed photo is retained locally for a limited time before permanent deletion.
+export interface TrashRecord extends PhotoRecord {
+    deletedAtISO: string;
+}
+
+export interface TrashPhoto extends TrashRecord {
     thumbUrl: string;
 }
 
@@ -24,6 +36,14 @@ export interface PresetSize {
     orientation: 'portrait' | 'landscape';
 }
 
+export type OverlayFontFamily =
+    | 'android-ui'
+    | 'noto-thai-ui'
+    | 'noto-thai-looped-ui'
+    | 'system-sans';
+
+export type TimestampFormat = 'thai-verbose' | 'iso' | 'sample-overlay';
+
 // App settings stored in localStorage
 export interface Settings {
     // Time
@@ -31,7 +51,7 @@ export interface Settings {
     globalCustomTime: string;
 
     // Format
-    timestampFormat: 'thai-verbose' | 'iso';
+    timestampFormat: TimestampFormat;
 
     // Output
     outputMode: 'original' | 'preset';
@@ -40,8 +60,12 @@ export interface Settings {
     fitMode: 'contain' | 'cover';
 
     // Overlay
-    overlayPosition: 'TR' | 'TL' | 'BR' | 'BL';
+    overlayPosition: 'TR' | 'TC' | 'TL' | 'BR' | 'BC' | 'BL';
     overlayPadding: number;
+    overlayFontFamily: OverlayFontFamily;
+    overlayFontWeight: number;
+    overlayStrokeWidth: number;
+    overlayFontHeightScale: number;
     fontMode: 'auto' | 'fixed';
     fontAutoScale: number;
     fontFixedPx: number;
@@ -69,7 +93,7 @@ export interface ToastMessage {
 export type CameraStatus = 'off' | 'starting' | 'ready' | 'error' | 'denied';
 
 // Modal type
-export type ModalType = 'none' | 'preview' | 'settings' | 'map';
+export type ModalType = 'none' | 'preview' | 'settings' | 'map' | 'trash';
 
 // Download file type
 export type DownloadFormat = 'jpeg' | 'png';

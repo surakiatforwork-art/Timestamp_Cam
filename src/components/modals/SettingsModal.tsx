@@ -3,7 +3,8 @@ import { useApp } from '../../context/AppContext';
 import { PRESET_SIZES, resetSettings } from '../../lib/settings';
 import { getCurrentPosition, reverseGeocode, forwardGeocode } from '../../lib/geocoding';
 import { getLogs, clearLogs, copyLogs, subscribeToLogs } from '../../lib/logger';
-import type { PresetSize } from '../../types';
+import type { OverlayFontFamily, PresetSize, TimestampFormat } from '../../types';
+import { dateTimeLocalValueToISO, toDateTimeLocalValue } from '../../lib/format';
 
 export default function SettingsModal() {
     const { state, dispatch, closeModal, deleteAllPhotos, showToast } = useApp();
@@ -165,11 +166,12 @@ export default function SettingsModal() {
                                 <label>เวลากำหนดเอง</label>
                                 <input
                                     type="datetime-local"
-                                    value={settings.globalCustomTime.slice(0, 16)}
+                                    value={toDateTimeLocalValue(settings.globalCustomTime)}
+                                    step="1"
                                     onChange={(e) => {
                                         dispatch({
                                             type: 'SET_SETTINGS',
-                                            payload: { globalCustomTime: new Date(e.target.value).toISOString() },
+                                            payload: { globalCustomTime: dateTimeLocalValueToISO(e.target.value) },
                                         });
                                     }}
                                 />
@@ -193,15 +195,16 @@ export default function SettingsModal() {
                                 onChange={(e) => {
                                     dispatch({
                                         type: 'SET_SETTINGS',
-                                        payload: { timestampFormat: e.target.value as 'thai-verbose' | 'iso' },
+                                        payload: { timestampFormat: e.target.value as TimestampFormat },
                                     });
                                 }}
                             >
                                 <option value="thai-verbose">ไทยแบบยาว + GMT+07:00</option>
+                                <option value="sample-overlay">แบบภาพตัวอย่าง</option>
                                 <option value="iso">YYYY-MM-DD HH:mm:ss</option>
                             </select>
                         </div>
-                        <p className="settings-note">Overlay จะแสดง 2 บรรทัด: Network และ Local</p>
+                        <p className="settings-note">แบบภาพตัวอย่างใช้เดือนย่อไทย ค.ศ. และพิกัด DMS เมื่อเปิดตำแหน่ง</p>
                     </div>
 
                     {/* Output Section */}
@@ -288,13 +291,15 @@ export default function SettingsModal() {
                                 onChange={(e) => {
                                     dispatch({
                                         type: 'SET_SETTINGS',
-                                        payload: { overlayPosition: e.target.value as 'TR' | 'TL' | 'BR' | 'BL' },
+                                        payload: { overlayPosition: e.target.value as 'TR' | 'TC' | 'TL' | 'BR' | 'BC' | 'BL' },
                                     });
                                 }}
                             >
                                 <option value="BL">ล่างซ้าย (BL)</option>
+                                <option value="BC">ล่างกลาง (BC)</option>
                                 <option value="BR">ล่างขวา (BR)</option>
                                 <option value="TL">บนซ้าย (TL)</option>
+                                <option value="TC">บนกลาง (TC) เหมือนตัวอย่าง</option>
                                 <option value="TR">บนขวา (TR)</option>
                             </select>
                         </div>
@@ -313,6 +318,77 @@ export default function SettingsModal() {
                                     });
                                 }}
                             />
+                        </div>
+
+                        <div className="settings-row">
+                            <label>ฟอนต์</label>
+                            <select
+                                value={settings.overlayFontFamily}
+                                onChange={(e) => {
+                                    dispatch({
+                                        type: 'SET_SETTINGS',
+                                        payload: { overlayFontFamily: e.target.value as OverlayFontFamily },
+                                    });
+                                }}
+                            >
+                                <option value="android-ui">Android UI (เหมือนตัวอย่าง)</option>
+                                <option value="noto-thai-ui">Noto Sans Thai UI</option>
+                                <option value="noto-thai-looped-ui">Noto Sans Thai Looped UI</option>
+                                <option value="system-sans">System Sans</option>
+                            </select>
+                        </div>
+
+                        <div className="settings-row">
+                            <label>ความหนาฟอนต์</label>
+                            <select
+                                value={settings.overlayFontWeight}
+                                onChange={(e) => {
+                                    dispatch({
+                                        type: 'SET_SETTINGS',
+                                        payload: { overlayFontWeight: parseInt(e.target.value, 10) },
+                                    });
+                                }}
+                            >
+                                <option value={400}>Regular</option>
+                                <option value={500}>Medium (เหมือนตัวอย่าง)</option>
+                                <option value={700}>Bold</option>
+                            </select>
+                        </div>
+
+                        <div className="settings-row">
+                            <label>ความหนาขอบดำ</label>
+                            <input
+                                type="number"
+                                min="0"
+                                max="8"
+                                step="0.1"
+                                value={settings.overlayStrokeWidth}
+                                onChange={(e) => {
+                                    dispatch({
+                                        type: 'SET_SETTINGS',
+                                        payload: { overlayStrokeWidth: parseFloat(e.target.value) || 0 },
+                                    });
+                                }}
+                            />
+                        </div>
+
+                        <div className="settings-row">
+                            <label>ความสูงฟอนต์</label>
+                            <input
+                                type="range"
+                                min="0.75"
+                                max="1.35"
+                                step="0.05"
+                                value={settings.overlayFontHeightScale}
+                                onChange={(e) => {
+                                    dispatch({
+                                        type: 'SET_SETTINGS',
+                                        payload: { overlayFontHeightScale: parseFloat(e.target.value) },
+                                    });
+                                }}
+                                style={{ width: 100 }}
+                            />
+                            <span>{Math.round(settings.overlayFontHeightScale * 100)}%</span>
                         </div>
 
                         <div className="settings-row">
@@ -368,7 +444,7 @@ export default function SettingsModal() {
                             </div>
                         )}
 
-                        <p className="settings-note">Overlay ใช้ stroke + shadow (ไม่มีแถบพื้นดำ)</p>
+                        <p className="settings-note">ค่าเริ่มต้นใช้ฟอนต์ Android UI, Medium, ขอบดำบางแบบภาพตัวอย่าง</p>
                     </div>
 
                     {/* Location Section */}
