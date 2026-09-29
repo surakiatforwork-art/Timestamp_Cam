@@ -17,12 +17,17 @@ export default function PreviewModal() {
     const [isLoadingGPS, setIsLoadingGPS] = useState(false);
     const [locationQuery, setLocationQuery] = useState('');
     const [isSearchingLocation, setIsSearchingLocation] = useState(false);
+    const [remarkDraft, setRemarkDraft] = useState('');
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const pointersRef = useRef(new Map<number, { x: number; y: number }>());
     const gestureRef = useRef({ startX: 0, startY: 0, startPanX: 0, startPanY: 0, startDistance: 0, startZoom: 1 });
 
     const photo = state.photos.find((p) => p.id === state.previewPhotoId);
+
+    useEffect(() => {
+        setRemarkDraft(photo?.remark ?? '');
+    }, [photo?.id, photo?.remark]);
 
     // Render preview
     const renderPreview = useCallback(async () => {
@@ -45,6 +50,7 @@ export default function PreviewModal() {
                 if (state.settings.showLatLng && latitude !== null) lineCount++;
                 if (state.settings.showAddress && address) lineCount++;
             }
+            if (state.settings.showRemark && photo.remark?.trim()) lineCount++;
 
             const outputW = state.settings.outputMode === 'original' ? photo.width : state.settings.presetSize.w;
             const outputH = state.settings.outputMode === 'original' ? photo.height : state.settings.presetSize.h;
@@ -71,6 +77,13 @@ export default function PreviewModal() {
 
     const handleTimeCustom = async (iso: string) => {
         await updatePhoto(photo.id, { timeMode: 'custom', timeValueISO: iso });
+    };
+
+    const handleSaveRemark = async () => {
+        const remark = remarkDraft.trim();
+        if (remark === (photo.remark ?? '')) return;
+        await updatePhoto(photo.id, { remark });
+        showToast(remark ? 'บันทึก Remark แล้ว' : 'ล้าง Remark แล้ว', 'success');
     };
 
     const handleLocationNow = async () => {
@@ -233,6 +246,23 @@ export default function PreviewModal() {
                             />
                         </div>
                     </div>
+
+                    {state.settings.showRemark && (
+                        <div className="preview-section remark-editor">
+                            <h4>Remark สำหรับรูปนี้</h4>
+                            <textarea
+                                value={remarkDraft}
+                                onChange={(event) => setRemarkDraft(event.target.value)}
+                                placeholder="เพิ่ม Remark สำหรับรูปนี้"
+                                rows={3}
+                            />
+                            <div className="preview-time-buttons">
+                                <button className="btn btn-sm btn-secondary" onClick={handleSaveRemark}>
+                                    บันทึก Remark
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
                     {state.settings.locationEnabled && (
                         <div className="preview-section">

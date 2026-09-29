@@ -39,6 +39,8 @@ export const DEFAULT_SETTINGS: Settings = {
     showSubdistrict: false,
     showDistrict: false,
     showProvince: false,
+    showRemark: false,
+    defaultRemark: '',
     latitude: null,
     longitude: null,
     cachedAddress: null,

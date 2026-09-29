@@ -80,10 +80,12 @@ export function buildOverlayGroups(
     showSubdistrict: boolean,
     showDistrict: boolean,
     showProvince: boolean,
+    showRemark: boolean,
     lat: number | null,
     lng: number | null,
     address: string | null,
-    details: LocationDetails | null
+    details: LocationDetails | null,
+    remark: string | undefined
 ): { timeLines: string[]; locationLines: string[] } {
     const date = new Date(timeValueISO);
     const formatted = formatTimestamp(date, format);
@@ -105,6 +107,7 @@ export function buildOverlayGroups(
         if (showDistrict && details?.district) locationLines.push(`เขต/อำเภอ: ${details.district}`);
         if (showProvince && details?.province) locationLines.push(`จังหวัด: ${details.province}`);
     }
+    if (showRemark && remark?.trim()) locationLines.push(`Remark : ${remark.trim()}`);
 
     return { timeLines, locationLines };
 }
@@ -332,10 +335,12 @@ export async function renderPhotoToCanvas(
         settings.showSubdistrict,
         settings.showDistrict,
         settings.showProvince,
+        settings.showRemark,
         photo.locationLatitude ?? settings.latitude,
         photo.locationLongitude ?? settings.longitude,
         photo.locationAddress ?? settings.cachedAddress,
-        photo.locationDetails ?? settings.locationDetails
+        photo.locationDetails ?? settings.locationDetails,
+        photo.remark
     );
 
     // Calculate font size based on output size (not preview size)

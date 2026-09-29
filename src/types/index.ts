@@ -31,6 +31,7 @@ export interface PhotoRecord {
     locationLongitude?: number | null;
     locationAddress?: string | null;
     locationDetails?: LocationDetails | null;
+    remark?: string;
 }
 
 // Runtime photo with object URL
@@ -96,6 +97,8 @@ export interface Settings {
     showSubdistrict: boolean;
     showDistrict: boolean;
     showProvince: boolean;
+    showRemark: boolean;
+    defaultRemark: string;
     latitude: number | null;
     longitude: number | null;
     cachedAddress: string | null;

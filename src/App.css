@@ -415,6 +415,30 @@
     flex-shrink: 0;
 }
 
+.remark-editor textarea {
+    display: block;
+    width: 100%;
+    min-height: 76px;
+    padding: 10px 12px;
+    resize: vertical;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    font: inherit;
+    line-height: 1.45;
+}
+
+.remark-editor textarea::placeholder { color: var(--text-muted); }
+
+.remark-editor textarea:focus {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.remark-editor .preview-time-buttons { margin-top: 8px; }
+
 .date-time-wheel-trigger {
     flex: 1;
     min-width: 0;
@@ -549,6 +573,18 @@
     margin-top: var(--spacing-sm);
     color: var(--text-secondary);
     font-size: 13px;
+}
+
+.settings-field-label {
+    display: block;
+    margin: var(--spacing-sm) 0 6px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.settings-section textarea {
+    width: 100%;
+    resize: vertical;
 }
 
 .alignment-picker {

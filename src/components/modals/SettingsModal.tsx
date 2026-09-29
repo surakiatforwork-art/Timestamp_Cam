@@ -492,6 +492,28 @@ export default function SettingsModal() {
                         </div>
                     </div>
 
+                    <div className="settings-section">
+                        <h3>🗒️ Remark</h3>
+                        <div className="settings-row">
+                            <label>แสดง Remark บนรูป</label>
+                            <button
+                                className={`toggle ${settings.showRemark ? 'on' : ''}`}
+                                onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showRemark: !settings.showRemark } })}
+                            >
+                                <span className="toggle-knob">{settings.showRemark ? '✓' : '✕'}</span>
+                            </button>
+                        </div>
+                        <label className="settings-field-label" htmlFor="default-remark">Remark เริ่มต้นสำหรับรูปใหม่</label>
+                        <textarea
+                            id="default-remark"
+                            value={settings.defaultRemark}
+                            onChange={(event) => dispatch({ type: 'SET_SETTINGS', payload: { defaultRemark: event.target.value } })}
+                            placeholder="ปล่อยว่างเพื่อไม่กำหนด Remark เริ่มต้น"
+                            rows={3}
+                        />
+                        <p className="settings-note">แก้ Remark ของแต่ละรูปได้จาก popup ของการ์ดภาพ</p>
+                    </div>
+
                     {/* Location Section */}
                     <div className="settings-section">
                         <h3>📍 ตำแหน่ง</h3>

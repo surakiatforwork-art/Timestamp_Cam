@@ -56,6 +56,7 @@ export function useCapture() {
                             : state.settings.globalCustomTime,
                     sourceName: 'camera',
                     fromFrontMirror: isFrontCamera,
+                    remark: state.settings.defaultRemark,
                 };
 
                 await addPhoto(record);
@@ -106,6 +107,7 @@ export function useCapture() {
                                 : state.settings.globalCustomTime,
                         sourceName: file.name,
                         fromFrontMirror: false,
+                        remark: state.settings.defaultRemark,
                     };
 
                     await addPhoto(record);
