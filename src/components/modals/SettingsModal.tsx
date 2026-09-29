@@ -1,10 +1,45 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { PRESET_SIZES, resetSettings } from '../../lib/settings';
-import { getCurrentPosition, reverseGeocode, forwardGeocode } from '../../lib/geocoding';
+import { getCurrentPosition, reverseGeocodeDetails, forwardGeocode } from '../../lib/geocoding';
 import { getLogs, clearLogs, copyLogs, subscribeToLogs } from '../../lib/logger';
-import type { OverlayFontFamily, PresetSize, TimestampFormat } from '../../types';
-import { dateTimeLocalValueToISO, toDateTimeLocalValue } from '../../lib/format';
+import type { OverlayFontFamily, OverlayTextAlignment, PresetSize, TimestampFormat } from '../../types';
+import DateTimeWheelPicker from '../common/DateTimeWheelPicker';
+import OverlayFrameEditor from '../common/OverlayFrameEditor';
+
+const ALIGNMENT_OPTIONS: Array<{ horizontal: OverlayTextAlignment['horizontal']; vertical: OverlayTextAlignment['vertical']; icon: string; label: string }> = [
+    { horizontal: 'left', vertical: 'top', icon: '↖', label: 'ซ้ายบน' },
+    { horizontal: 'center', vertical: 'top', icon: '↑', label: 'กลางบน' },
+    { horizontal: 'right', vertical: 'top', icon: '↗', label: 'ขวาบน' },
+    { horizontal: 'left', vertical: 'middle', icon: '←', label: 'ซ้ายกลาง' },
+    { horizontal: 'center', vertical: 'middle', icon: '•', label: 'กึ่งกลาง' },
+    { horizontal: 'right', vertical: 'middle', icon: '→', label: 'ขวากลาง' },
+    { horizontal: 'left', vertical: 'bottom', icon: '↙', label: 'ซ้ายล่าง' },
+    { horizontal: 'center', vertical: 'bottom', icon: '↓', label: 'กลางล่าง' },
+    { horizontal: 'right', vertical: 'bottom', icon: '↘', label: 'ขวาล่าง' },
+];
+
+function AlignmentPicker({ value, onChange }: { value: OverlayTextAlignment; onChange: (value: OverlayTextAlignment) => void }) {
+    return (
+        <div className="alignment-picker" aria-label="จัดวางข้อความในกรอบ">
+            {ALIGNMENT_OPTIONS.map((option) => {
+                const active = value.horizontal === option.horizontal && value.vertical === option.vertical;
+                return (
+                    <button
+                        type="button"
+                        key={`${option.horizontal}-${option.vertical}`}
+                        className={active ? 'active' : ''}
+                        title={option.label}
+                        aria-label={option.label}
+                        onClick={() => onChange({ horizontal: option.horizontal, vertical: option.vertical })}
+                    >
+                        {option.icon}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
 
 export default function SettingsModal() {
     const { state, dispatch, closeModal, deleteAllPhotos, showToast } = useApp();
@@ -23,20 +58,22 @@ export default function SettingsModal() {
         return unsubscribe;
     }, []);
 
-    // Update address when lat/lng changes and showAddress is on
+    const needsLocationDetails = settings.showAddress || settings.showSubdistrict || settings.showDistrict || settings.showProvince;
+
+    // Update address details when any selected location field needs them.
     useEffect(() => {
-        if (settings.locationEnabled && settings.showAddress && settings.latitude !== null && settings.longitude !== null) {
-            if (!settings.cachedAddress) {
+        if (settings.locationEnabled && needsLocationDetails && settings.latitude !== null && settings.longitude !== null) {
+            if (!settings.cachedAddress && !settings.locationDetails) {
                 fetchAddress(settings.latitude, settings.longitude);
             }
         }
-    }, [settings.locationEnabled, settings.showAddress, settings.latitude, settings.longitude]);
+    }, [settings.locationEnabled, needsLocationDetails, settings.latitude, settings.longitude]);
 
     const fetchAddress = async (lat: number, lng: number) => {
         setLocStatus('กำลังหาที่อยู่...');
-        const address = await reverseGeocode(lat, lng);
-        if (address) {
-            dispatch({ type: 'SET_SETTINGS', payload: { cachedAddress: address } });
+        const result = await reverseGeocodeDetails(lat, lng);
+        if (result?.displayName || result?.details) {
+            dispatch({ type: 'SET_SETTINGS', payload: { cachedAddress: result.displayName, locationDetails: result.details } });
             setLocStatus('');
         } else {
             setLocStatus('ไม่พบที่อยู่');
@@ -54,6 +91,7 @@ export default function SettingsModal() {
                     latitude: pos.lat,
                     longitude: pos.lng,
                     cachedAddress: null,
+                    locationDetails: null,
                 },
             });
             setLocStatus(`พบตำแหน่ง: ${pos.lat.toFixed(6)}, ${pos.lng.toFixed(6)}`);
@@ -79,6 +117,7 @@ export default function SettingsModal() {
                         latitude: result.lat,
                         longitude: result.lng,
                         cachedAddress: result.displayName,
+                        locationDetails: result.details,
                     },
                 });
                 setLocStatus('พบตำแหน่ง');
@@ -164,16 +203,12 @@ export default function SettingsModal() {
                         {settings.globalTimeMode === 'custom' && (
                             <div className="settings-row">
                                 <label>เวลากำหนดเอง</label>
-                                <input
-                                    type="datetime-local"
-                                    value={toDateTimeLocalValue(settings.globalCustomTime)}
-                                    step="1"
-                                    onChange={(e) => {
-                                        dispatch({
-                                            type: 'SET_SETTINGS',
-                                            payload: { globalCustomTime: dateTimeLocalValueToISO(e.target.value) },
-                                        });
-                                    }}
+                                <DateTimeWheelPicker
+                                    value={settings.globalCustomTime}
+                                    onChange={(globalCustomTime) => dispatch({
+                                        type: 'SET_SETTINGS',
+                                        payload: { globalCustomTime },
+                                    })}
                                 />
                             </div>
                         )}
@@ -284,26 +319,6 @@ export default function SettingsModal() {
                     {/* Overlay Section */}
                     <div className="settings-section">
                         <h3>🏷️ Overlay</h3>
-                        <div className="settings-row">
-                            <label>ตำแหน่ง</label>
-                            <select
-                                value={settings.overlayPosition}
-                                onChange={(e) => {
-                                    dispatch({
-                                        type: 'SET_SETTINGS',
-                                        payload: { overlayPosition: e.target.value as 'TR' | 'TC' | 'TL' | 'BR' | 'BC' | 'BL' },
-                                    });
-                                }}
-                            >
-                                <option value="BL">ล่างซ้าย (BL)</option>
-                                <option value="BC">ล่างกลาง (BC)</option>
-                                <option value="BR">ล่างขวา (BR)</option>
-                                <option value="TL">บนซ้าย (TL)</option>
-                                <option value="TC">บนกลาง (TC) เหมือนตัวอย่าง</option>
-                                <option value="TR">บนขวา (TR)</option>
-                            </select>
-                        </div>
-
                         <div className="settings-row">
                             <label>Padding (px)</label>
                             <input
@@ -447,6 +462,36 @@ export default function SettingsModal() {
                         <p className="settings-note">ค่าเริ่มต้นใช้ฟอนต์ Android UI, Medium, ขอบดำบางแบบภาพตัวอย่าง</p>
                     </div>
 
+                    <div className="settings-section">
+                        <h3>▣ กรอบวางข้อความ</h3>
+                        <OverlayFrameEditor
+                            timeFrame={settings.timeFrame}
+                            locationFrame={settings.locationFrame}
+                            aspectRatio={settings.outputMode === 'original'
+                                ? 3 / 4
+                                : settings.presetSize.w / settings.presetSize.h}
+                            onChange={(kind, frame) => dispatch({
+                                type: 'SET_SETTINGS',
+                                payload: kind === 'time' ? { timeFrame: frame } : { locationFrame: frame },
+                            })}
+                        />
+                        <p className="settings-note">ลากกรอบเพื่อย้ายตำแหน่ง และลากมุมล่างขวาเพื่อปรับขนาด กรอบจะไม่ปรากฏบนรูปที่บันทึก</p>
+                        <div className="frame-alignment-row">
+                            <span>จัดข้อความเวลา</span>
+                            <AlignmentPicker
+                                value={settings.timeTextAlignment}
+                                onChange={(timeTextAlignment) => dispatch({ type: 'SET_SETTINGS', payload: { timeTextAlignment } })}
+                            />
+                        </div>
+                        <div className="frame-alignment-row">
+                            <span>จัดข้อความตำแหน่ง</span>
+                            <AlignmentPicker
+                                value={settings.locationTextAlignment}
+                                onChange={(locationTextAlignment) => dispatch({ type: 'SET_SETTINGS', payload: { locationTextAlignment } })}
+                            />
+                        </div>
+                    </div>
+
                     {/* Location Section */}
                     <div className="settings-section">
                         <h3>📍 ตำแหน่ง</h3>
@@ -497,6 +542,27 @@ export default function SettingsModal() {
                                     </button>
                                 </div>
 
+                                <div className="settings-row">
+                                    <label>แสดงแขวง/ตำบล</label>
+                                    <button className={`toggle ${settings.showSubdistrict ? 'on' : ''}`} onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showSubdistrict: !settings.showSubdistrict } })}>
+                                        <span className="toggle-knob">{settings.showSubdistrict ? '✓' : '✕'}</span>
+                                    </button>
+                                </div>
+
+                                <div className="settings-row">
+                                    <label>แสดงเขต/อำเภอ</label>
+                                    <button className={`toggle ${settings.showDistrict ? 'on' : ''}`} onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showDistrict: !settings.showDistrict } })}>
+                                        <span className="toggle-knob">{settings.showDistrict ? '✓' : '✕'}</span>
+                                    </button>
+                                </div>
+
+                                <div className="settings-row">
+                                    <label>แสดงจังหวัด</label>
+                                    <button className={`toggle ${settings.showProvince ? 'on' : ''}`} onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showProvince: !settings.showProvince } })}>
+                                        <span className="toggle-knob">{settings.showProvince ? '✓' : '✕'}</span>
+                                    </button>
+                                </div>
+
                                 <div className="settings-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
                                     <button
                                         className="btn btn-sm btn-secondary"
@@ -520,7 +586,7 @@ export default function SettingsModal() {
                                             const val = e.target.value ? parseFloat(e.target.value) : null;
                                             dispatch({
                                                 type: 'SET_SETTINGS',
-                                                payload: { latitude: val, cachedAddress: null },
+                                                payload: { latitude: val, cachedAddress: null, locationDetails: null },
                                             });
                                         }}
                                         placeholder="ละติจูด"
@@ -537,7 +603,7 @@ export default function SettingsModal() {
                                             const val = e.target.value ? parseFloat(e.target.value) : null;
                                             dispatch({
                                                 type: 'SET_SETTINGS',
-                                                payload: { longitude: val, cachedAddress: null },
+                                                payload: { longitude: val, cachedAddress: null, locationDetails: null },
                                             });
                                         }}
                                         placeholder="ลองจิจูด"

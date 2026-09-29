@@ -351,12 +351,20 @@
     justify-content: center;
     padding: var(--spacing-md);
     flex-shrink: 0;
+    overflow: hidden;
 }
 
 .preview-canvas-container canvas {
     max-width: 100%;
     max-height: 32vh;
     border-radius: var(--radius-sm);
+    touch-action: none;
+    cursor: grab;
+    transition: transform 0.08s ease-out;
+}
+
+.preview-canvas-container canvas:active {
+    cursor: grabbing;
 }
 
 .preview-info {
@@ -407,8 +415,249 @@
     flex-shrink: 0;
 }
 
+.date-time-wheel-trigger {
+    flex: 1;
+    min-width: 0;
+    padding: var(--spacing-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    text-align: left;
+}
+
 .preview-actions .btn {
     flex: 1;
+}
+
+/* ========== DATE/TIME WHEEL PICKER ========== */
+.datetime-picker-backdrop,
+.download-progress-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-lg);
+    background: rgba(0, 0, 0, 0.8);
+    animation: fadeIn 0.16s ease;
+}
+
+.datetime-picker {
+    width: min(100%, 560px);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    animation: slideUp 0.2s ease;
+}
+
+.datetime-picker-header {
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-bottom: 1px solid var(--border);
+}
+
+.datetime-picker-header h3 {
+    font-size: 16px;
+}
+
+.wheel-columns {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 2px;
+    padding: var(--spacing-md) var(--spacing-sm);
+}
+
+.wheel-column {
+    min-width: 0;
+    text-align: center;
+}
+
+.wheel-column > span {
+    display: block;
+    height: 22px;
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+.wheel-scroll {
+    position: relative;
+    height: 126px;
+    overflow-y: auto;
+    scrollbar-width: none;
+    scroll-snap-type: y mandatory;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+}
+
+.overlay-frame-editor {
+    position: relative;
+    width: 100%;
+    max-height: 300px;
+    overflow: hidden;
+    touch-action: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-tertiary);
+    background-image: linear-gradient(45deg, rgba(255,255,255,0.035) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.035) 75%);
+    background-size: 18px 18px;
+}
+
+.overlay-frame {
+    position: absolute;
+    box-sizing: border-box;
+    border: 2px solid var(--accent);
+    cursor: move;
+}
+
+.overlay-frame.location-frame { border-color: #53c4f5; }
+
+.overlay-frame span {
+    display: block;
+    width: max-content;
+    padding: 2px 5px;
+    color: #fff;
+    background: var(--accent);
+    font-size: 11px;
+    pointer-events: none;
+}
+
+.overlay-frame.location-frame span { background: #238fc1; }
+
+.overlay-frame i {
+    position: absolute;
+    right: -8px;
+    bottom: -8px;
+    width: 15px;
+    height: 15px;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: nwse-resize;
+}
+
+.overlay-frame.location-frame i { background: #238fc1; }
+
+.frame-alignment-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-sm);
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.alignment-picker {
+    display: grid;
+    grid-template-columns: repeat(3, 28px);
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+}
+
+.alignment-picker button {
+    width: 28px;
+    height: 25px;
+    padding: 0;
+    border-radius: 2px;
+    color: var(--text-muted);
+    background: transparent;
+    font-size: 15px;
+    line-height: 1;
+}
+
+.alignment-picker button.active {
+    color: #fff;
+    background: var(--accent);
+}
+
+.wheel-scroll::-webkit-scrollbar {
+    display: none;
+}
+
+.wheel-spacer,
+.wheel-scroll button {
+    display: block;
+    width: 100%;
+    height: 42px;
+    scroll-snap-align: center;
+}
+
+.wheel-scroll button {
+    padding: 0 2px;
+    color: var(--text-muted);
+    background: transparent;
+    border-radius: 0;
+    font-size: 12px;
+}
+
+.wheel-scroll button.selected {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    font-weight: 700;
+}
+
+.datetime-picker-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+    border-top: 1px solid var(--border);
+}
+
+/* ========== DOWNLOAD PROGRESS ========== */
+.download-progress-dialog {
+    width: min(100%, 320px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-xl);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    animation: slideUp 0.2s ease;
+}
+
+.loading-spinner {
+    width: 16px;
+    height: 16px;
+    display: inline-block;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    vertical-align: -3px;
+    animation: loadingSpin 0.7s linear infinite;
+}
+
+.loading-spinner.large {
+    width: 42px;
+    height: 42px;
+    border-width: 4px;
+    color: var(--accent);
+}
+
+@keyframes loadingSpin {
+    to { transform: rotate(360deg); }
+}
+
+.download-progress-track {
+    width: 100%;
+    height: 8px;
+    overflow: hidden;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-full);
+}
+
+.download-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.2s ease;
 }
 
 /* ========== SETTINGS MODAL ========== */

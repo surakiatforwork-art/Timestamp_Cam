@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { reverseGeocode } from '../../lib/geocoding';
+import { reverseGeocodeDetails } from '../../lib/geocoding';
 import 'leaflet/dist/leaflet.css';
 
 export default function MapModal() {
@@ -93,17 +93,15 @@ export default function MapModal() {
 
         setIsLoading(true);
 
-        // Reverse geocode to get address
-        let address: string | null = null;
-        if (state.settings.showAddress) {
-            address = await reverseGeocode(selectedLat, selectedLng);
-        }
+        const needsDetails = state.settings.showAddress || state.settings.showSubdistrict || state.settings.showDistrict || state.settings.showProvince;
+        const resolved = needsDetails ? await reverseGeocodeDetails(selectedLat, selectedLng) : null;
 
         if (previewPhoto) {
             await updatePhoto(previewPhoto.id, {
                 locationLatitude: selectedLat,
                 locationLongitude: selectedLng,
-                locationAddress: address,
+                locationAddress: resolved?.displayName ?? null,
+                locationDetails: resolved?.details ?? null,
             });
         } else {
             dispatch({
@@ -111,7 +109,8 @@ export default function MapModal() {
                 payload: {
                     latitude: selectedLat,
                     longitude: selectedLng,
-                    cachedAddress: address,
+                    cachedAddress: resolved?.displayName ?? null,
+                    locationDetails: resolved?.details ?? null,
                 },
             });
         }

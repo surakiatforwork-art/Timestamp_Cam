@@ -3,7 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { useCamera } from '../../hooks/useCamera';
 import { useCapture } from '../../hooks/useCapture';
 import { formatTimeSummary, formatLocationSummary } from '../../lib/format';
-import { dateTimeLocalValueToISO, toDateTimeLocalValue } from '../../lib/format';
+import DateTimeWheelPicker from '../common/DateTimeWheelPicker';
 
 export default function BottomControls() {
     const { state, dispatch, deleteAllPhotos, openPreview, showToast } = useApp();
@@ -83,17 +83,13 @@ export default function BottomControls() {
                 {settings.globalTimeMode === 'custom' && (
                     <div className="meta-row">
                         <span className="meta-label"></span>
-                        <input
-                            type="datetime-local"
-                            value={toDateTimeLocalValue(settings.globalCustomTime)}
-                            step="1"
-                            onChange={(e) => {
-                                dispatch({
-                                    type: 'SET_SETTINGS',
-                                    payload: { globalCustomTime: dateTimeLocalValueToISO(e.target.value) },
-                                });
-                            }}
-                            style={{ flex: 1 }}
+                        <DateTimeWheelPicker
+                            value={settings.globalCustomTime}
+                            className="meta-time-input"
+                            onChange={(globalCustomTime) => dispatch({
+                                type: 'SET_SETTINGS',
+                                payload: { globalCustomTime },
+                            })}
                         />
                     </div>
                 )}

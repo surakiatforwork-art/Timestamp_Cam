@@ -1,4 +1,4 @@
-import type { OverlayFontFamily, Photo, Settings, TimestampFormat } from '../types';
+import type { LocationDetails, OverlayFontFamily, OverlayFrame, OverlayTextAlignment, Photo, Settings, TimestampFormat } from '../types';
 import { formatDMS, formatTimestamp } from './format';
 
 const OVERLAY_FONT_STACKS: Record<OverlayFontFamily, string> = {
@@ -71,54 +71,71 @@ export function calculateCoverCrop(
 }
 
 // Build overlay text lines
-export function buildOverlayLines(
+export function buildOverlayGroups(
     timeValueISO: string,
     format: TimestampFormat,
     locationEnabled: boolean,
     showLatLng: boolean,
     showAddress: boolean,
+    showSubdistrict: boolean,
+    showDistrict: boolean,
+    showProvince: boolean,
     lat: number | null,
     lng: number | null,
-    address: string | null
-): string[] {
+    address: string | null,
+    details: LocationDetails | null
+): { timeLines: string[]; locationLines: string[] } {
     const date = new Date(timeValueISO);
     const formatted = formatTimestamp(date, format);
 
-    const lines: string[] = [
+    const timeLines: string[] = [
         `Network: ${formatted}`,
         `Local: ${formatted}`,
     ];
+    const locationLines: string[] = [];
 
     if (locationEnabled) {
         if (showLatLng && lat !== null && lng !== null) {
-            lines.push(format === 'sample-overlay' ? formatDMS(lat, lng) : `${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+            locationLines.push(format === 'sample-overlay' ? formatDMS(lat, lng) : `${lat.toFixed(6)}, ${lng.toFixed(6)}`);
         }
         if (showAddress && address) {
-            // Split long addresses
-            if (address.length > 50) {
-                const mid = address.lastIndexOf(' ', 50);
-                if (mid > 20) {
-                    lines.push(address.substring(0, mid));
-                    lines.push(address.substring(mid + 1));
-                } else {
-                    lines.push(address);
-                }
-            } else {
-                lines.push(address);
-            }
+            locationLines.push(address);
         }
+        if (showSubdistrict && details?.subdistrict) locationLines.push(`แขวง/ตำบล: ${details.subdistrict}`);
+        if (showDistrict && details?.district) locationLines.push(`เขต/อำเภอ: ${details.district}`);
+        if (showProvince && details?.province) locationLines.push(`จังหวัด: ${details.province}`);
     }
 
+    return { timeLines, locationLines };
+}
+
+function wrapOverlayText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+    if (ctx.measureText(text).width <= maxWidth) return [text];
+
+    const tokens = text.includes(' ') ? text.split(/\s+/) : Array.from(text);
+    const lines: string[] = [];
+    let line = '';
+    for (const token of tokens) {
+        const next = line ? `${line}${text.includes(' ') ? ' ' : ''}${token}` : token;
+        if (line && ctx.measureText(next).width > maxWidth) {
+            lines.push(line);
+            line = token;
+        } else {
+            line = next;
+        }
+    }
+    if (line) lines.push(line);
     return lines;
 }
 
-// Render overlay text onto canvas
-export function renderOverlay(
+// Render overlay text into a normalized frame. Long text wraps and continues below the frame.
+export function renderOverlayInFrame(
     ctx: CanvasRenderingContext2D,
     canvasW: number,
     canvasH: number,
     lines: string[],
-    position: 'TR' | 'TC' | 'TL' | 'BR' | 'BC' | 'BL',
+    frame: OverlayFrame,
+    alignment: OverlayTextAlignment,
     padding: number,
     fontSize: number,
     fontFamily: OverlayFontFamily,
@@ -131,21 +148,29 @@ export function renderOverlay(
     // Font setup
     ctx.font = `${fontWeight} ${fontSize}px ${getOverlayFontStack(fontFamily)}`;
 
-    // Calculate text dimensions
     const heightScale = Math.max(0.5, fontHeightScale);
     const lineHeight = fontSize * 1.3 * heightScale;
-    const textHeight = lines.length * lineHeight;
+    const frameX = frame.x * canvasW;
+    const frameY = frame.y * canvasH;
+    const frameWidth = frame.width * canvasW;
+    const frameHeight = frame.height * canvasH;
+    const maxWidth = Math.max(1, frameWidth - padding * 2);
+    const wrappedLines = lines.flatMap((line) => wrapOverlayText(ctx, line, maxWidth));
+    const textHeight = wrappedLines.length * lineHeight;
+    const availableHeight = Math.max(0, frameHeight - padding * 2);
 
-    // Position calculation
-    const isRight = position.includes('R');
-    const isCenter = position.includes('C');
-    const isBottom = position.includes('B');
-
-    ctx.textAlign = isCenter ? 'center' : isRight ? 'right' : 'left';
+    ctx.textAlign = alignment.horizontal;
     ctx.textBaseline = 'top';
-
-    const textX = isCenter ? canvasW / 2 : isRight ? canvasW - padding : padding;
-    const startY = isBottom ? canvasH - padding - textHeight : padding;
+    const textX = alignment.horizontal === 'left'
+        ? frameX + padding
+        : alignment.horizontal === 'right'
+            ? frameX + frameWidth - padding
+            : frameX + frameWidth / 2;
+    const startY = textHeight > availableHeight || alignment.vertical === 'top'
+        ? frameY + padding
+        : alignment.vertical === 'bottom'
+            ? frameY + frameHeight - padding - textHeight
+            : frameY + (frameHeight - textHeight) / 2;
 
     // Shadow settings
     ctx.shadowColor = 'rgba(0,0,0,0.75)';
@@ -153,7 +178,7 @@ export function renderOverlay(
     ctx.shadowOffsetX = Math.max(0.5, strokeWidth * 0.55);
     ctx.shadowOffsetY = Math.max(0.5, strokeWidth * 0.55);
 
-    lines.forEach((line, i) => {
+    wrappedLines.forEach((line, i) => {
         const lineY = startY + i * lineHeight;
 
         // Stroke (outline)
@@ -297,16 +322,20 @@ export async function renderPhotoToCanvas(
         }
     }
 
-    // Build overlay lines
-    const lines = buildOverlayLines(
+    // Build time and location text separately so each group honors its own frame.
+    const overlay = buildOverlayGroups(
         photo.timeValueISO,
         settings.timestampFormat,
         settings.locationEnabled,
         settings.showLatLng,
         settings.showAddress,
+        settings.showSubdistrict,
+        settings.showDistrict,
+        settings.showProvince,
         photo.locationLatitude ?? settings.latitude,
         photo.locationLongitude ?? settings.longitude,
-        photo.locationAddress ?? settings.cachedAddress
+        photo.locationAddress ?? settings.cachedAddress,
+        photo.locationDetails ?? settings.locationDetails
     );
 
     // Calculate font size based on output size (not preview size)
@@ -320,13 +349,13 @@ export async function renderPhotoToCanvas(
 
     await ensureOverlayFontReady(fontSize, settings.overlayFontFamily, settings.overlayFontWeight);
 
-    // Render overlay
-    renderOverlay(
+    renderOverlayInFrame(
         ctx,
         canvasW,
         canvasH,
-        lines,
-        settings.overlayPosition,
+        overlay.timeLines,
+        settings.timeFrame,
+        settings.timeTextAlignment,
         settings.overlayPadding * scale,
         fontSize,
         settings.overlayFontFamily,
@@ -334,6 +363,23 @@ export async function renderPhotoToCanvas(
         settings.overlayStrokeWidth * scale,
         settings.overlayFontHeightScale
     );
+
+    if (overlay.locationLines.length > 0) {
+        renderOverlayInFrame(
+            ctx,
+            canvasW,
+            canvasH,
+            overlay.locationLines,
+            settings.locationFrame,
+            settings.locationTextAlignment,
+            settings.overlayPadding * scale,
+            fontSize,
+            settings.overlayFontFamily,
+            settings.overlayFontWeight,
+            settings.overlayStrokeWidth * scale,
+            settings.overlayFontHeightScale
+        );
+    }
 
     return canvas;
 }

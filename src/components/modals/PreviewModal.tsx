@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { renderPhotoToCanvas } from '../../lib/canvas';
 import { downloadOne } from '../../lib/download';
-import { getCurrentPosition, resolveLocationQuery, reverseGeocode } from '../../lib/geocoding';
-import { dateTimeLocalValueToISO, toDateTimeLocalValue } from '../../lib/format';
+import { log } from '../../lib/logger';
+import { getCurrentPosition, resolveLocationQuery, reverseGeocodeDetails } from '../../lib/geocoding';
 import type { DownloadFormat } from '../../types';
+import DateTimeWheelPicker from '../common/DateTimeWheelPicker';
 
 export default function PreviewModal() {
     const { state, dispatch, closeModal, updatePhoto, deletePhoto, showToast } = useApp();
@@ -16,6 +17,10 @@ export default function PreviewModal() {
     const [isLoadingGPS, setIsLoadingGPS] = useState(false);
     const [locationQuery, setLocationQuery] = useState('');
     const [isSearchingLocation, setIsSearchingLocation] = useState(false);
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+    const gestureRef = useRef({ startX: 0, startY: 0, startPanX: 0, startPanY: 0, startDistance: 0, startZoom: 1 });
 
     const photo = state.photos.find((p) => p.id === state.previewPhotoId);
 
@@ -24,7 +29,7 @@ export default function PreviewModal() {
         if (!photo || !canvasRef.current) return;
 
         try {
-            const canvas = await renderPhotoToCanvas(photo, state.settings, 600);
+            const canvas = await renderPhotoToCanvas(photo, state.settings, 1200);
             const ctx = canvasRef.current.getContext('2d')!;
 
             canvasRef.current.width = canvas.width;
@@ -52,6 +57,8 @@ export default function PreviewModal() {
 
     useEffect(() => {
         renderPreview();
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
     }, [renderPreview]);
 
     if (!photo) return null;
@@ -62,8 +69,7 @@ export default function PreviewModal() {
         showToast('ตั้งเวลาปัจจุบันแล้ว', 'success');
     };
 
-    const handleTimeCustom = async (value: string) => {
-        const iso = dateTimeLocalValueToISO(value);
+    const handleTimeCustom = async (iso: string) => {
         await updatePhoto(photo.id, { timeMode: 'custom', timeValueISO: iso });
     };
 
@@ -73,14 +79,14 @@ export default function PreviewModal() {
         setIsLoadingGPS(true);
         try {
             const pos = await getCurrentPosition();
-            const address = state.settings.showAddress
-                ? await reverseGeocode(pos.lat, pos.lng)
-                : null;
+            const shouldResolveDetails = state.settings.showAddress || state.settings.showSubdistrict || state.settings.showDistrict || state.settings.showProvince;
+            const resolved = shouldResolveDetails ? await reverseGeocodeDetails(pos.lat, pos.lng) : null;
 
             await updatePhoto(photo.id, {
                 locationLatitude: pos.lat,
                 locationLongitude: pos.lng,
-                locationAddress: address,
+                locationAddress: resolved?.displayName ?? null,
+                locationDetails: resolved?.details ?? null,
             });
 
             showToast('ตั้งตำแหน่งปัจจุบันให้รูปนี้แล้ว', 'success');
@@ -114,6 +120,7 @@ export default function PreviewModal() {
                 locationLatitude: result.lat,
                 locationLongitude: result.lng,
                 locationAddress: result.displayName,
+                locationDetails: result.details,
             });
             setLocationQuery('');
             showToast('ตั้งตำแหน่งจากการค้นหาแล้ว', 'success');
@@ -133,6 +140,7 @@ export default function PreviewModal() {
             await downloadOne(photo, state.settings, downloadFormat, jpegQuality, index);
             showToast('ดาวน์โหลดแล้ว', 'success');
         } catch (e) {
+            log(`Download failed: ${e}`, 'error');
             showToast('ดาวน์โหลดไม่สำเร็จ', 'error');
         } finally {
             setIsDownloading(false);
@@ -145,11 +153,46 @@ export default function PreviewModal() {
         showToast('ลบรูปแล้ว', 'info');
     };
 
-    const timeValue = toDateTimeLocalValue(photo.timeValueISO);
     const locationLat = photo.locationLatitude ?? state.settings.latitude;
     const locationLng = photo.locationLongitude ?? state.settings.longitude;
     const locationAddress = photo.locationAddress ?? state.settings.cachedAddress;
     const locationSource = photo.locationLatitude !== undefined ? 'ตำแหน่งเฉพาะรูป' : 'ใช้ค่าจาก Settings';
+
+    const updateGesture = () => {
+        const points = [...pointersRef.current.values()];
+        if (points.length === 1) {
+            setPan({ x: gestureRef.current.startPanX + points[0].x - gestureRef.current.startX, y: gestureRef.current.startPanY + points[0].y - gestureRef.current.startY });
+        } else if (points.length >= 2) {
+            const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+            setZoom(Math.min(4, Math.max(1, gestureRef.current.startZoom * distance / gestureRef.current.startDistance)));
+        }
+    };
+
+    const startGesture = (event: React.PointerEvent<HTMLCanvasElement>) => {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        const points = [...pointersRef.current.values()];
+        gestureRef.current.startPanX = pan.x;
+        gestureRef.current.startPanY = pan.y;
+        gestureRef.current.startZoom = zoom;
+        if (points.length === 1) {
+            gestureRef.current.startX = points[0].x;
+            gestureRef.current.startY = points[0].y;
+        } else {
+            gestureRef.current.startDistance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+        }
+    };
+
+    const endGesture = (event: React.PointerEvent<HTMLCanvasElement>) => {
+        pointersRef.current.delete(event.pointerId);
+        const points = [...pointersRef.current.values()];
+        if (points.length === 1) {
+            gestureRef.current.startX = points[0].x;
+            gestureRef.current.startY = points[0].y;
+            gestureRef.current.startPanX = pan.x;
+            gestureRef.current.startPanY = pan.y;
+        }
+    };
 
     return (
         <div className="modal-backdrop preview-modal" onClick={closeModal}>
@@ -160,7 +203,15 @@ export default function PreviewModal() {
                 </div>
 
                 <div className="preview-canvas-container">
-                    <canvas ref={canvasRef} />
+                    <canvas
+                        ref={canvasRef}
+                        style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+                        onPointerDown={startGesture}
+                        onPointerMove={(event) => { if (pointersRef.current.has(event.pointerId)) { pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY }); updateGesture(); } }}
+                        onPointerUp={endGesture}
+                        onPointerCancel={endGesture}
+                        onDoubleClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+                    />
                 </div>
 
                 <div className="preview-info">{previewInfo}</div>
@@ -176,12 +227,9 @@ export default function PreviewModal() {
                             >
                                 ⏱️ ใช้เวลาปัจจุบัน
                             </button>
-                            <input
-                                type="datetime-local"
-                                value={timeValue}
-                                step="1"
-                                onChange={(e) => handleTimeCustom(e.target.value)}
-                                style={{ flex: 1 }}
+                            <DateTimeWheelPicker
+                                value={photo.timeValueISO}
+                                onChange={handleTimeCustom}
                             />
                         </div>
                     </div>
@@ -271,7 +319,7 @@ export default function PreviewModal() {
                         onClick={handleDownload}
                         disabled={isDownloading}
                     >
-                        {isDownloading ? '⏳ กำลังดาวน์โหลด...' : '💾 ดาวน์โหลด'}
+                        {isDownloading ? <><span className="loading-spinner" /> กำลังดาวน์โหลด...</> : '💾 ดาวน์โหลด'}
                     </button>
                     <button className="btn btn-danger" onClick={handleDelete}>
                         🗑️ ลบรูปนี้

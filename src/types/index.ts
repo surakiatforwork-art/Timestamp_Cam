@@ -1,3 +1,21 @@
+export interface LocationDetails {
+    subdistrict: string | null;
+    district: string | null;
+    province: string | null;
+}
+
+export interface OverlayFrame {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+export interface OverlayTextAlignment {
+    horizontal: 'left' | 'center' | 'right';
+    vertical: 'top' | 'middle' | 'bottom';
+}
+
 // Photo record stored in IndexedDB
 export interface PhotoRecord {
     id: string;
@@ -12,6 +30,7 @@ export interface PhotoRecord {
     locationLatitude?: number | null;
     locationLongitude?: number | null;
     locationAddress?: string | null;
+    locationDetails?: LocationDetails | null;
 }
 
 // Runtime photo with object URL
@@ -74,9 +93,19 @@ export interface Settings {
     locationEnabled: boolean;
     showLatLng: boolean;
     showAddress: boolean;
+    showSubdistrict: boolean;
+    showDistrict: boolean;
+    showProvince: boolean;
     latitude: number | null;
     longitude: number | null;
     cachedAddress: string | null;
+    locationDetails: LocationDetails | null;
+
+    // Frame coordinates are stored as fractions of the rendered image size.
+    timeFrame: OverlayFrame;
+    locationFrame: OverlayFrame;
+    timeTextAlignment: OverlayTextAlignment;
+    locationTextAlignment: OverlayTextAlignment;
 
     // Log
     showLog: boolean;

@@ -1,5 +1,6 @@
 import { Geolocation } from '@capacitor/geolocation';
 import { OpenLocationCode } from 'open-location-code';
+import type { LocationDetails } from '../types';
 
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
 const openLocationCode = new OpenLocationCode();
@@ -8,6 +9,12 @@ export interface LocationSearchResult {
     lat: number;
     lng: number;
     displayName: string | null;
+    details: LocationDetails | null;
+}
+
+export interface ReverseGeocodeResult {
+    displayName: string | null;
+    details: LocationDetails | null;
 }
 
 interface Coordinate {
@@ -41,6 +48,14 @@ export async function reverseGeocode(
     lat: number,
     lng: number
 ): Promise<string | null> {
+    const result = await reverseGeocodeDetails(lat, lng);
+    return result?.displayName ?? null;
+}
+
+export async function reverseGeocodeDetails(
+    lat: number,
+    lng: number
+): Promise<ReverseGeocodeResult | null> {
     try {
         const url = `${NOMINATIM_BASE}/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=th`;
         const res = await fetch(url, {
@@ -52,7 +67,10 @@ export async function reverseGeocode(
         if (!res.ok) return null;
 
         const data = await res.json();
-        return data.display_name || null;
+        return {
+            displayName: data.display_name || null,
+            details: extractLocationDetails(data.address),
+        };
     } catch (e) {
         console.error('Reverse geocode failed:', e);
         return null;
@@ -62,9 +80,9 @@ export async function reverseGeocode(
 // Forward geocode: search query -> lat/lng
 export async function forwardGeocode(
     query: string
-): Promise<{ lat: number; lng: number; displayName: string } | null> {
+): Promise<{ lat: number; lng: number; displayName: string; details: LocationDetails | null } | null> {
     try {
-        const url = `${NOMINATIM_BASE}/search?format=jsonv2&q=${encodeURIComponent(query)}&limit=1&accept-language=th`;
+        const url = `${NOMINATIM_BASE}/search?format=jsonv2&addressdetails=1&q=${encodeURIComponent(query)}&limit=1&accept-language=th`;
         const res = await fetch(url, {
             headers: {
                 'User-Agent': 'TimestampApp/1.0',
@@ -80,6 +98,7 @@ export async function forwardGeocode(
             lat: parseFloat(data[0].lat),
             lng: parseFloat(data[0].lon),
             displayName: data[0].display_name,
+            details: extractLocationDetails(data[0].address),
         };
     } catch (e) {
         console.error('Forward geocode failed:', e);
@@ -111,13 +130,23 @@ export async function resolveLocationQuery(
 
     const geocoded = await forwardGeocode(normalizedQuery);
     return geocoded
-        ? { lat: geocoded.lat, lng: geocoded.lng, displayName: geocoded.displayName }
+        ? { lat: geocoded.lat, lng: geocoded.lng, displayName: geocoded.displayName, details: geocoded.details }
         : null;
 }
 
 async function withAddress(coordinate: Coordinate): Promise<LocationSearchResult> {
-    const displayName = await reverseGeocode(coordinate.lat, coordinate.lng);
-    return { ...coordinate, displayName };
+    const result = await reverseGeocodeDetails(coordinate.lat, coordinate.lng);
+    return { ...coordinate, displayName: result?.displayName ?? null, details: result?.details ?? null };
+}
+
+function extractLocationDetails(address: Record<string, string> | undefined): LocationDetails | null {
+    if (!address) return null;
+    const details: LocationDetails = {
+        subdistrict: address.suburb ?? address.neighbourhood ?? address.quarter ?? address.village ?? null,
+        district: address.city_district ?? address.district ?? address.county ?? address.municipality ?? address.city ?? address.town ?? null,
+        province: address.state ?? address.province ?? address.region ?? null,
+    };
+    return details.subdistrict || details.district || details.province ? details : null;
 }
 
 function parseDecimalCoordinates(query: string): Coordinate | null {
@@ -191,7 +220,7 @@ async function resolvePlusCode(
         if (!referencePoint) {
             const fallback = await forwardGeocode(query);
             return fallback
-                ? { lat: fallback.lat, lng: fallback.lng, displayName: fallback.displayName }
+                ? { lat: fallback.lat, lng: fallback.lng, displayName: fallback.displayName, details: fallback.details }
                 : null;
         }
 

@@ -16,6 +16,7 @@ export default function Topbar() {
 
             if (result.photos.length > 0) {
                 showToast('กำลังนำเข้ารูปภาพ...', 'info');
+                dispatch({ type: 'SET_IMPORT_PROGRESS', payload: { current: 0, total: result.photos.length } });
 
                 // Convert GalleryPhotos to Files
                 const files = await Promise.all(result.photos.map(async (photo) => {
@@ -31,6 +32,7 @@ export default function Topbar() {
                 window.dispatchEvent(event);
             }
         } catch (e) {
+            dispatch({ type: 'SET_IMPORT_PROGRESS', payload: null });
             // Check if user cancelled
             if ((e as any).message !== 'User cancelled photos app') {
                 log(`Pick images failed: ${e}`, 'error');
@@ -92,9 +94,7 @@ export default function Topbar() {
                 </button>
             </div>
 
-            <div className="topbar-center">
-                Timestamp
-            </div>
+            <div className="topbar-center" aria-hidden="true" />
 
             <div className="topbar-right">
                 <button

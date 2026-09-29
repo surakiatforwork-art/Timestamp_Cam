@@ -8,6 +8,7 @@ import PreviewModal from './components/modals/PreviewModal';
 import SettingsModal from './components/modals/SettingsModal';
 import MapModal from './components/modals/MapModal';
 import TrashModal from './components/modals/TrashModal';
+import DownloadProgressModal from './components/common/DownloadProgressModal';
 
 function App() {
     const { state } = useApp();
@@ -19,6 +20,7 @@ function App() {
             <BottomControls />
 
             <Toast />
+            <DownloadProgressModal />
 
             {state.activeModal === 'preview' && <PreviewModal />}
             {state.activeModal === 'settings' && <SettingsModal />}

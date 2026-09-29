@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { captureFromVideo, processImportedImage } from '../lib/canvas';
 import { generateId } from '../lib/format';
 import { log } from '../lib/logger';
+import { vibrateForCapture } from '../lib/deviceFeedback';
 import type { PhotoRecord } from '../types';
 
 export function useCapture() {
@@ -22,7 +23,7 @@ export function useCapture() {
             if (captureInFlightRef.current) return;
             captureInFlightRef.current = true;
             setIsCapturing(true);
-            navigator.vibrate?.(35);
+            vibrateForCapture();
             const { width: vfWidth, height: vfHeight } = lastVfDimensions.current;
 
             // Fallback to video dimensions if viewfinder not set

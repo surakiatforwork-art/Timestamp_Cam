@@ -31,8 +31,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
         registerPlugin(MediaStorePlugin.class);
+        registerPlugin(DeviceFeedbackPlugin.class);
+        super.onCreate(savedInstanceState);
         
         // Request permissions on startup
         requestRequiredPermissions();

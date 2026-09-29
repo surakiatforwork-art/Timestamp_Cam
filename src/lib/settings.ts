@@ -36,9 +36,17 @@ export const DEFAULT_SETTINGS: Settings = {
     locationEnabled: false,
     showLatLng: true,
     showAddress: true,
+    showSubdistrict: false,
+    showDistrict: false,
+    showProvince: false,
     latitude: null,
     longitude: null,
     cachedAddress: null,
+    locationDetails: null,
+    timeFrame: { x: 0.04, y: 0.04, width: 0.92, height: 0.16 },
+    locationFrame: { x: 0.04, y: 0.24, width: 0.92, height: 0.22 },
+    timeTextAlignment: { horizontal: 'left', vertical: 'top' },
+    locationTextAlignment: { horizontal: 'left', vertical: 'top' },
     showLog: false,
 };
 
