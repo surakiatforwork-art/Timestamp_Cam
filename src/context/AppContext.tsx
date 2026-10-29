@@ -1,11 +1,11 @@
-import { createContext, useContext, useReducer, useEffect, type ReactNode, useCallback, useRef } from 'react';
+import { createContext, useContext, useReducer, useEffect, useState, type ReactNode, useCallback, useRef } from 'react';
 import type { Photo, Settings, ToastMessage, CameraStatus, ModalType, PhotoRecord, TrashPhoto } from '../types';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS, resetSettings as resetSettingsStorage } from '../lib/settings';
 import {
     getAllPhotos, addPhoto as addPhotoDB, updatePhoto as updatePhotoDB, getAllTrash,
     movePhotoToTrash as movePhotoToTrashDB, moveAllPhotosToTrash as moveAllPhotosToTrashDB,
-    restoreTrashPhotos as restoreTrashPhotosDB, permanentlyDeleteTrashPhotos, clearTrash as clearTrashDB,
-    purgeExpiredTrash,
+    restoreTrashPhotos as restoreTrashPhotosDB, permanentlyDeleteTrashPhotos,
+    reorderPhotos as reorderPhotosDB,
 } from '../lib/db';
 import { generateId } from '../lib/format';
 import { log } from '../lib/logger';
@@ -23,6 +23,9 @@ interface AppState {
     // Photos
     photos: Photo[];
     trashPhotos: TrashPhoto[];
+    storageStatus: 'loading' | 'ready' | 'error';
+    trashStatus: 'loading' | 'ready' | 'error';
+    trashProgress: { current: number; total: number; phase?: 'migration' | 'loading' };
 
     // Settings
     settings: Settings;
@@ -41,6 +44,13 @@ interface AppState {
 
 // Actions
 type Action =
+    | { type: 'SET_STORAGE_STATUS'; payload: AppState['storageStatus'] }
+    | { type: 'SET_TRASH_STATUS'; payload: AppState['trashStatus'] }
+    | { type: 'SET_TRASH_PROGRESS'; payload: AppState['trashProgress'] }
+    | { type: 'MERGE_TRASH_PHOTOS'; payload: TrashPhoto[] }
+    | { type: 'RESTORE_PHOTOS'; payload: Photo[] }
+    | { type: 'REORDER_PHOTOS'; payload: string[] }
+    | { type: 'DELETE_PHOTOS'; payload: string[] }
     | { type: 'SET_CAMERA_ON'; payload: boolean }
     | { type: 'SET_FACING_MODE'; payload: 'environment' | 'user' }
     | { type: 'SET_TORCH_ON'; payload: boolean }
@@ -73,6 +83,9 @@ const initialState: AppState = {
     cameraStatus: 'off',
     photos: [],
     trashPhotos: [],
+    storageStatus: 'loading',
+    trashStatus: 'loading',
+    trashProgress: { current: 0, total: 0 },
     settings: loadSettings(),
     activeModal: 'none',
     previewPhotoId: null,
@@ -84,6 +97,33 @@ const initialState: AppState = {
 // Reducer
 function appReducer(state: AppState, action: Action): AppState {
     switch (action.type) {
+        case 'SET_STORAGE_STATUS':
+            return { ...state, storageStatus: action.payload };
+        case 'SET_TRASH_STATUS':
+            return { ...state, trashStatus: action.payload };
+        case 'SET_TRASH_PROGRESS':
+            return { ...state, trashProgress: action.payload };
+        case 'MERGE_TRASH_PHOTOS': {
+            const photos = new Map(state.trashPhotos.map((photo) => [photo.id, photo]));
+            action.payload.forEach((photo) => photos.set(photo.id, photo));
+            return { ...state, trashPhotos: [...photos.values()].sort((a, b) => b.deletedAtISO.localeCompare(a.deletedAtISO)) };
+        }
+        case 'RESTORE_PHOTOS': {
+            const ids = new Set(action.payload.map((photo) => photo.id));
+            return { ...state, photos: [...state.photos.filter((photo) => !ids.has(photo.id)), ...action.payload],
+                trashPhotos: state.trashPhotos.filter((photo) => !ids.has(photo.id)) };
+        }
+        case 'REORDER_PHOTOS': {
+            const photos = new Map(state.photos.map((photo) => [photo.id, photo]));
+            const ordered: Photo[] = [];
+            for (const id of action.payload) {
+                const photo = photos.get(id);
+                if (photo) { ordered.push(photo); photos.delete(id); }
+            }
+            return { ...state, photos: [...ordered, ...photos.values()] };
+        }
+        case 'DELETE_PHOTOS':
+            return { ...state, photos: state.photos.filter((photo) => !action.payload.includes(photo.id)) };
         case 'SET_CAMERA_ON':
             return { ...state, cameraOn: action.payload };
         case 'SET_FACING_MODE':
@@ -159,6 +199,9 @@ interface AppContextType {
     openPreview: (photoId: string) => void;
     closeModal: () => void;
     videoRef: React.RefObject<HTMLVideoElement>;
+    retryPhotoStorage: () => void;
+    retryTrashStorage: () => void;
+    reorderPhotos: (ids: string[]) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -167,63 +210,91 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const [state, dispatch] = useReducer(appReducer, initialState);
     const objectUrlsRef = useRef<Map<string, string>>(new Map());
     const videoRef = useRef<HTMLVideoElement>(null);
+    const [storageAttempt, setStorageAttempt] = useState(0);
+    const [trashAttempt, setTrashAttempt] = useState(0);
+    const retryPhotoStorage = useCallback(() => setStorageAttempt((attempt) => attempt + 1), []);
+    const retryTrashStorage = useCallback(() => setTrashAttempt((attempt) => attempt + 1), []);
 
-    // Load photos from IndexedDB on mount
+    // Do not expose an apparently empty, writable library while storage is unavailable.
     useEffect(() => {
+        const controller = new AbortController();
+        dispatch({ type: 'SET_STORAGE_STATUS', payload: 'loading' });
+        dispatch({ type: 'SET_TRASH_PHOTOS', payload: [] });
         async function loadPhotos() {
             try {
-                await purgeExpiredTrash();
-                const [records, trashRecords] = await Promise.all([getAllPhotos(), getAllTrash()]);
+                const records = await getAllPhotos(controller.signal);
+                if (controller.signal.aborted) return;
                 const photos: Photo[] = records.map((r) => {
                     const thumbUrl = URL.createObjectURL(r.baseBlob);
                     objectUrlsRef.current.set(r.id, thumbUrl);
                     return { ...r, thumbUrl };
                 });
-                const trashPhotos: TrashPhoto[] = trashRecords.map((r) => {
-                    const thumbUrl = URL.createObjectURL(r.baseBlob);
-                    objectUrlsRef.current.set(r.id, thumbUrl);
-                    return { ...r, thumbUrl };
-                });
                 dispatch({ type: 'SET_PHOTOS', payload: photos });
-                dispatch({ type: 'SET_TRASH_PHOTOS', payload: trashPhotos });
+                dispatch({ type: 'SET_STORAGE_STATUS', payload: 'ready' });
                 log(`Loaded ${photos.length} photos from storage`);
             } catch (e) {
-                log(`Failed to load photos: ${e}`, 'error');
+                if (!controller.signal.aborted) {
+                    log(`Failed to load photos: ${e}`, 'error');
+                    dispatch({ type: 'SET_STORAGE_STATUS', payload: 'error' });
+                }
             }
         }
         loadPhotos();
 
         // Cleanup on unmount
         return () => {
+            controller.abort();
             objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+            objectUrlsRef.current.clear();
         };
-    }, []);
+    }, [storageAttempt]);
 
-    // Also expire old items while the app remains open for a long time.
+    // Trash hydration starts only after every active original has been loaded.
     useEffect(() => {
-        const removeExpired = async () => {
-            const ids = await purgeExpiredTrash();
-            if (!ids.length) return;
-            ids.forEach((id) => {
-                const url = objectUrlsRef.current.get(id);
-                if (url) URL.revokeObjectURL(url);
-                objectUrlsRef.current.delete(id);
-            });
-            dispatch({ type: 'REMOVE_TRASH_PHOTOS', payload: ids });
-            log(`Permanently removed ${ids.length} expired trash photo(s)`);
+        if (state.storageStatus !== 'ready') return;
+        const controller = new AbortController();
+        dispatch({ type: 'SET_TRASH_STATUS', payload: 'loading' });
+        dispatch({ type: 'SET_TRASH_PROGRESS', payload: { current: 0, total: 0 } });
+        const loadTrash = async () => {
+            try {
+                const records = await getAllTrash((current, total, phase) => {
+                    if (!controller.signal.aborted) dispatch({ type: 'SET_TRASH_PROGRESS', payload: { current, total, phase } });
+                }, controller.signal);
+                if (controller.signal.aborted) return;
+                const photos = records.map((record) => {
+                    const thumbUrl = objectUrlsRef.current.get(record.id) ?? URL.createObjectURL(record.baseBlob);
+                    objectUrlsRef.current.set(record.id, thumbUrl);
+                    return { ...record, thumbUrl };
+                });
+                dispatch({ type: 'MERGE_TRASH_PHOTOS', payload: photos });
+                dispatch({ type: 'SET_TRASH_STATUS', payload: 'ready' });
+                log(`Loaded ${photos.length} trash originals in background`);
+            } catch (error) {
+                if (!controller.signal.aborted) {
+                    log(`Trash loading failed: ${error}`, 'error');
+                    dispatch({ type: 'SET_TRASH_STATUS', payload: 'error' });
+                }
+            }
         };
-        const timer = window.setInterval(removeExpired, 6 * 60 * 60 * 1000);
-        return () => window.clearInterval(timer);
+        // Let the main screen paint before starting background I/O.
+        const timer = window.setTimeout(loadTrash, 0);
+        return () => { window.clearTimeout(timer); controller.abort(); };
+    }, [state.storageStatus, trashAttempt]);
+
+    const reorderPhotos = useCallback(async (ids: string[]) => {
+        await reorderPhotosDB(ids);
+        dispatch({ type: 'REORDER_PHOTOS', payload: ids });
     }, []);
 
     // Add photo
     const addPhoto = useCallback(async (record: PhotoRecord) => {
+        if (state.storageStatus !== 'ready') throw new Error('Photo storage is not ready');
         await addPhotoDB(record);
         const thumbUrl = URL.createObjectURL(record.baseBlob);
         objectUrlsRef.current.set(record.id, thumbUrl);
         dispatch({ type: 'ADD_PHOTO', payload: { ...record, thumbUrl } });
         log(`Photo added: ${record.id}`);
-    }, []);
+    }, [state.storageStatus]);
 
     // Update photo
     const updatePhoto = useCallback(async (id: string, updates: Partial<PhotoRecord>) => {
@@ -239,37 +310,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'DELETE_PHOTO', payload: id });
         if (existing) {
             dispatch({
-                type: 'SET_TRASH_PHOTOS',
-                payload: [{ ...trashed, thumbUrl: existing.thumbUrl }, ...state.trashPhotos],
+                type: 'MERGE_TRASH_PHOTOS',
+                payload: [{ ...trashed, thumbUrl: existing.thumbUrl }],
             });
         }
         log(`Photo moved to trash: ${id}`);
-    }, [state.photos, state.trashPhotos]);
+    }, [state.photos]);
 
     // Delete all photos
     const deleteAllPhotos = useCallback(async () => {
         const trashed = await moveAllPhotosToTrashDB();
         const photoById = new Map(state.photos.map((photo) => [photo.id, photo]));
-        const trashPhotos = trashed.map((photo) => ({ ...photo, thumbUrl: photoById.get(photo.id)?.thumbUrl ?? URL.createObjectURL(photo.baseBlob) }));
-        dispatch({ type: 'DELETE_ALL_PHOTOS' });
-        dispatch({ type: 'SET_TRASH_PHOTOS', payload: [...trashPhotos, ...state.trashPhotos] });
+        const trashPhotos = trashed.map((photo) => {
+            const thumbUrl = photoById.get(photo.id)?.thumbUrl ?? URL.createObjectURL(photo.baseBlob);
+            objectUrlsRef.current.set(photo.id, thumbUrl);
+            return { ...photo, thumbUrl };
+        });
+        dispatch({ type: 'DELETE_PHOTOS', payload: trashed.map((photo) => photo.id) });
+        dispatch({ type: 'MERGE_TRASH_PHOTOS', payload: trashPhotos });
         log('All photos moved to trash');
-    }, [state.photos, state.trashPhotos]);
+    }, [state.photos]);
 
     const restoreTrashPhotos = useCallback(async (ids: string[]): Promise<number> => {
+        if (state.trashStatus !== 'ready') throw new Error('Trash is still loading');
         const restored = await restoreTrashPhotosDB(ids);
         if (!restored.length) return 0;
         const trashById = new Map(state.trashPhotos.map((photo) => [photo.id, photo]));
-        const restoredPhotos: Photo[] = restored.map((photo) => ({
-            ...photo,
-            thumbUrl: trashById.get(photo.id)?.thumbUrl ?? URL.createObjectURL(photo.baseBlob),
-        }));
-        dispatch({ type: 'SET_PHOTOS', payload: [...state.photos, ...restoredPhotos] });
-        dispatch({ type: 'SET_TRASH_PHOTOS', payload: state.trashPhotos.filter((photo) => !ids.includes(photo.id)) });
+        const restoredPhotos: Photo[] = restored.map((photo) => {
+            const thumbUrl = trashById.get(photo.id)?.thumbUrl ?? URL.createObjectURL(photo.baseBlob);
+            objectUrlsRef.current.set(photo.id, thumbUrl);
+            return { ...photo, thumbUrl };
+        });
+        dispatch({ type: 'RESTORE_PHOTOS', payload: restoredPhotos });
         return restoredPhotos.length;
-    }, [state.photos, state.trashPhotos]);
+    }, [state.trashStatus, state.trashPhotos]);
 
     const deleteTrashPhotos = useCallback(async (ids: string[]) => {
+        if (state.trashStatus !== 'ready') throw new Error('Trash is still loading');
         await permanentlyDeleteTrashPhotos(ids);
         ids.forEach((id) => {
             const url = objectUrlsRef.current.get(id);
@@ -278,18 +355,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 objectUrlsRef.current.delete(id);
             }
         });
-        dispatch({ type: 'SET_TRASH_PHOTOS', payload: state.trashPhotos.filter((photo) => !ids.includes(photo.id)) });
-    }, [state.trashPhotos]);
+        dispatch({ type: 'REMOVE_TRASH_PHOTOS', payload: ids });
+    }, [state.trashStatus]);
 
     const clearTrash = useCallback(async () => {
-        await clearTrashDB();
+        if (state.trashStatus !== 'ready') throw new Error('Trash is still loading');
+        const ids = state.trashPhotos.map((photo) => photo.id);
+        await permanentlyDeleteTrashPhotos(ids);
         state.trashPhotos.forEach((photo) => {
             const url = objectUrlsRef.current.get(photo.id);
             if (url) URL.revokeObjectURL(url);
             objectUrlsRef.current.delete(photo.id);
         });
-        dispatch({ type: 'SET_TRASH_PHOTOS', payload: [] });
-    }, [state.trashPhotos]);
+        dispatch({ type: 'REMOVE_TRASH_PHOTOS', payload: ids });
+    }, [state.trashPhotos, state.trashStatus]);
 
     // Show toast
     const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -328,6 +407,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 openPreview,
                 closeModal,
                 videoRef,
+                retryPhotoStorage,
+                retryTrashStorage,
+                reorderPhotos,
             }}
         >
             {children}

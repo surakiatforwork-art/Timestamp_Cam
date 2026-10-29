@@ -1,15 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { useCamera } from '../../hooks/useCamera';
 import { useCapture } from '../../hooks/useCapture';
 import { formatTimeSummary, formatLocationSummary } from '../../lib/format';
 import DateTimeWheelPicker from '../common/DateTimeWheelPicker';
+import PhotoGallery from './PhotoGallery';
 
 export default function BottomControls() {
-    const { state, dispatch, deleteAllPhotos, openPreview, showToast } = useApp();
+    const { state, dispatch, deleteAllPhotos, showToast } = useApp();
     const { videoRef, cameraOn, cameraStatus, hasMultipleCameras, switchCamera } = useCamera();
     const { capturePhoto, importPhotos, isCapturing } = useCapture();
-    const galleryRef = useRef<HTMLDivElement>(null);
 
     const { photos, settings } = state;
 
@@ -23,13 +23,6 @@ export default function BottomControls() {
         window.addEventListener('do-import', handleImport);
         return () => window.removeEventListener('do-import', handleImport);
     }, [importPhotos]);
-
-    // Auto-scroll gallery to end when new photo added
-    useEffect(() => {
-        if (galleryRef.current && photos.length > 0) {
-            galleryRef.current.scrollLeft = galleryRef.current.scrollWidth;
-        }
-    }, [photos.length]);
 
     const handleCapture = async () => {
         if (!videoRef.current || cameraStatus !== 'ready') return;
@@ -102,20 +95,7 @@ export default function BottomControls() {
             </div>
 
             {/* Gallery Strip */}
-            <div className="gallery-strip" ref={galleryRef}>
-                {photos.map((photo, index) => (
-                    <div
-                        key={photo.id}
-                        className="thumbnail"
-                        onClick={() => openPreview(photo.id)}
-                    >
-                        <img src={photo.thumbUrl} alt={`Photo ${index + 1}`} />
-                        <span className="thumbnail-badge">{index + 1}</span>
-
-
-                    </div>
-                ))}
-            </div>
+            <PhotoGallery />
 
             {/* Action Buttons */}
             <div className="action-buttons">

@@ -63,7 +63,7 @@ export function useCapture() {
                 // showToast('ถ่ายรูปแล้ว', 'success'); // Removed as per user request
             } catch (e) {
                 log(`Capture failed: ${e}`, 'error');
-                showToast('ถ่ายรูปไม่สำเร็จ', 'error');
+                showToast('ถ่ายหรือบันทึกภาพไม่สำเร็จ กรุณาตรวจสอบพื้นที่ว่างในเครื่อง', 'error');
             } finally {
                 captureInFlightRef.current = false;
                 setIsCapturing(false);

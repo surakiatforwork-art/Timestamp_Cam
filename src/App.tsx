@@ -9,9 +9,33 @@ import SettingsModal from './components/modals/SettingsModal';
 import MapModal from './components/modals/MapModal';
 import TrashModal from './components/modals/TrashModal';
 import DownloadProgressModal from './components/common/DownloadProgressModal';
+import TrashReminder from './components/common/TrashReminder';
 
 function App() {
-    const { state } = useApp();
+    const { state, retryPhotoStorage } = useApp();
+
+    if (state.storageStatus !== 'ready') {
+        return (
+            <div className="app">
+                <div className="download-progress-backdrop" role="dialog" aria-modal="true" aria-labelledby="storage-title">
+                    <div className="download-progress-dialog">
+                        {state.storageStatus === 'loading' ? (
+                            <>
+                                <span className="loading-spinner large" aria-hidden="true" />
+                                <strong id="storage-title">กำลังเปิดคลังภาพ</strong>
+                            </>
+                        ) : (
+                            <>
+                                <strong id="storage-title">เปิดคลังภาพไม่สำเร็จ</strong>
+                                <p>ยังอ่านข้อมูลภาพไม่ได้ กรุณาลองอีกครั้งและตรวจสอบพื้นที่ว่างในเครื่อง</p>
+                                <button className="btn btn-primary" onClick={retryPhotoStorage}>ลองอีกครั้ง</button>
+                            </>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="app">
@@ -21,6 +45,7 @@ function App() {
 
             <Toast />
             <DownloadProgressModal />
+            <TrashReminder />
 
             {state.activeModal === 'preview' && <PreviewModal />}
             {state.activeModal === 'settings' && <SettingsModal />}

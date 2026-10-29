@@ -211,7 +211,7 @@ export default function PreviewModal() {
         <div className="modal-backdrop preview-modal" onClick={closeModal}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h2>พรีวิวรูป</h2>
+                    <h2>รูปที่ {state.photos.findIndex((item) => item.id === photo.id) + 1} / {state.photos.length}</h2>
                     <button className="icon-btn" onClick={closeModal}>✕</button>
                 </div>
 

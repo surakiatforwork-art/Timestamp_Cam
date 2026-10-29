@@ -1,21 +1,30 @@
 import { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 
-const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-
-function remainingDays(deletedAtISO: string): string {
-    const remaining = new Date(deletedAtISO).getTime() + RETENTION_MS - Date.now();
-    if (remaining <= 0) return 'กำลังลบอัตโนมัติ';
-    return `เหลือ ${Math.ceil(remaining / (24 * 60 * 60 * 1000))} วัน`;
+function trashAge(deletedAtISO: string): string {
+    const days = Math.max(0, Math.floor((Date.now() - new Date(deletedAtISO).getTime()) / 86400000));
+    return days > 30 ? `อยู่ในถังขยะ ${days} วัน · เกิน 30 วัน` : `อยู่ในถังขยะ ${days} วัน`;
 }
 
 export default function TrashModal() {
     const {
         state, closeModal, restoreTrashPhotos,
-        permanentlyDeleteTrashPhotos, clearTrash, showToast,
+        permanentlyDeleteTrashPhotos, clearTrash, showToast, retryTrashStorage,
     } = useApp();
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const { trashPhotos } = state;
+    const [busy, setBusy] = useState(false);
+    const canEdit = state.trashStatus === 'ready' && !busy;
+    const progress = state.trashProgress;
+    const percent = progress.total ? Math.round(progress.current / progress.total * 100) : 0;
+
+    const run = async (action: () => Promise<void>) => {
+        if (!canEdit) return;
+        setBusy(true);
+        try { await action(); }
+        catch { showToast('จัดการรูปในถังขยะไม่สำเร็จ กรุณาลองอีกครั้ง', 'error'); }
+        finally { setBusy(false); }
+    };
 
     const toggle = (id: string) => {
         setSelectedIds((current) => {
@@ -67,6 +76,7 @@ export default function TrashModal() {
                             type="checkbox"
                             checked={trashPhotos.length > 0 && selectedIds.size === trashPhotos.length}
                             onChange={toggleAll}
+                            disabled={!canEdit}
                         />
                         เลือกทั้งหมด
                     </label>
@@ -74,7 +84,21 @@ export default function TrashModal() {
                 </div>
 
                 <div className="trash-list">
-                    {trashPhotos.length === 0 ? (
+                    {state.trashStatus === 'loading' && (
+                        <div className="trash-load-status" role="status" aria-live="polite">
+                            <span className="loading-spinner" aria-hidden="true" />
+                            <strong>{progress.phase === 'migration' ? 'กำลังย้ายข้อมูลถังขยะ' : 'กำลังโหลดถังขยะ'}</strong>
+                            <span>{progress.current} / {progress.total} รูป · {percent}%</span>
+                            <progress max={Math.max(progress.total, 1)} value={progress.current} aria-label="ความคืบหน้าถังขยะ" />
+                        </div>
+                    )}
+                    {state.trashStatus === 'error' && (
+                        <div className="trash-load-status" role="alert">
+                            <strong>โหลดถังขยะไม่สำเร็จ</strong>
+                            <button className="btn btn-secondary" onClick={retryTrashStorage}>ลองอีกครั้ง</button>
+                        </div>
+                    )}
+                    {state.trashStatus === 'ready' && trashPhotos.length === 0 ? (
                         <p className="trash-empty">ถังขยะว่างอยู่</p>
                     ) : trashPhotos.map((photo) => (
                         <label className="trash-item" key={photo.id}>
@@ -82,25 +106,26 @@ export default function TrashModal() {
                                 type="checkbox"
                                 checked={selectedIds.has(photo.id)}
                                 onChange={() => toggle(photo.id)}
+                                disabled={!canEdit}
                             />
                             <img src={photo.thumbUrl} alt="รูปที่ลบ" />
                             <span className="trash-item-info">
                                 <strong>{photo.sourceName === 'camera' ? 'รูปจากกล้อง' : photo.sourceName}</strong>
                                 <small>ลบเมื่อ {new Date(photo.deletedAtISO).toLocaleString('th-TH')}</small>
-                                <small>{remainingDays(photo.deletedAtISO)}</small>
+                                <small>{trashAge(photo.deletedAtISO)}</small>
                             </span>
                         </label>
                     ))}
                 </div>
 
                 <div className="trash-actions">
-                    <button className="btn btn-secondary" onClick={handleClearTrash} disabled={!trashPhotos.length}>
+                    <button className="btn btn-secondary" onClick={() => run(handleClearTrash)} disabled={!canEdit || !trashPhotos.length}>
                         ล้างถังขยะ
                     </button>
-                    <button className="btn btn-danger" onClick={deleteSelected} disabled={!selectedIds.size}>
+                    <button className="btn btn-danger" onClick={() => run(deleteSelected)} disabled={!canEdit || !selectedIds.size}>
                         ลบถาวร
                     </button>
-                    <button className="btn btn-primary" onClick={restoreSelected} disabled={!selectedIds.size}>
+                    <button className="btn btn-primary" onClick={() => run(restoreSelected)} disabled={!canEdit || !selectedIds.size}>
                         กู้คืน
                     </button>
                 </div>

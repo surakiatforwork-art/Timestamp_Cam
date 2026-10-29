@@ -16,7 +16,7 @@ export interface OverlayTextAlignment {
     vertical: 'top' | 'middle' | 'bottom';
 }
 
-// Photo record stored in IndexedDB
+// Original image and metadata stored durably by Android, or IndexedDB in a browser.
 export interface PhotoRecord {
     id: string;
     baseBlob: Blob;
@@ -39,7 +39,7 @@ export interface Photo extends PhotoRecord {
     thumbUrl: string;
 }
 
-// A removed photo is retained locally for a limited time before permanent deletion.
+// Removed photos remain stored until the user explicitly deletes them permanently.
 export interface TrashRecord extends PhotoRecord {
     deletedAtISO: string;
 }
