@@ -826,47 +826,25 @@
     flex-wrap: wrap;
 }
 
-.gallery-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 var(--spacing-md);
-    min-height: 34px;
-    color: var(--text-muted);
-    font-size: 12px;
-}
-
-.gallery-sort-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    min-width: 96px;
-    height: 32px;
-    padding: 0 8px;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-primary);
-    font: inherit;
-    cursor: pointer;
-}
-
-.gallery-sort-btn.active { color: var(--accent); background: var(--accent-dim); }
-.gallery-strip.sorting { scroll-behavior: auto; }
-.gallery-sort-btn:disabled { opacity: 0.45; cursor: default; }
+.gallery-strip { flex-wrap: nowrap; align-items: center; height: 80px; padding-top: 12px; padding-bottom: 12px; touch-action: pan-x; }
+.gallery-strip.is-sorting { scroll-behavior: auto; }
 button.thumbnail { padding: 0; background: transparent; font: inherit; }
-.sortable-thumbnail { touch-action: none; cursor: grab; }
-.thumbnail.is-dragging { z-index: 10; opacity: 0.8; cursor: grabbing; }
-.thumbnail-grip {
-    position: absolute;
-    bottom: 3px;
-    right: 3px;
-    display: flex;
-    color: white;
-    padding: 2px;
-    background: rgba(0, 0, 0, 0.6);
-    border-radius: 4px;
+.sortable-thumbnail { touch-action: pan-x; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.thumbnail img { user-select: none; -webkit-user-drag: none; }
+.thumbnail.is-dragging { opacity: 0.25; }
+.drag-overlay {
+    pointer-events: none;
+    cursor: grabbing;
+    border-color: var(--accent);
+    animation: card-lift 160ms ease-out both;
+    will-change: transform;
+}
+@keyframes card-lift {
+    from { transform: translateY(0) scale(1); box-shadow: 0 0 0 rgba(0, 0, 0, 0); }
+    to { transform: translateY(-6px) scale(1.08); box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .drag-overlay { animation: none; transform: translateY(-6px) scale(1.08); box-shadow: 0 8px 16px rgba(0, 0, 0, 0.5); }
 }
 
 .trash-load-status { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px 12px; text-align: center; }
