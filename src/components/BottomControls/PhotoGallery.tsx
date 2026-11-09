@@ -4,12 +4,13 @@ import { SortableContext, arrayMove, horizontalListSortingStrategy, sortableKeyb
 import { CSS } from '@dnd-kit/utilities';
 import { useApp } from '../../context/AppContext';
 import type { Photo } from '../../types';
+import { downloadAll, downloadOne } from '../../lib/download';
 
 const horizontalOnly: Modifier = ({ transform }) => ({ ...transform, y: 0 });
 const dragModifiers = [horizontalOnly];
 
-function GalleryCard({ photo, index, disabled, onPreview, count, pressed }: {
-    photo: Photo; index: number; disabled: boolean; onPreview: () => void; count?: number; pressed?: boolean;
+function GalleryCard({ photo, index, disabled, onPreview, count, pressed, member }: {
+    photo: Photo; index: number; disabled: boolean; onPreview: () => void; count?: number; pressed?: boolean; member?: boolean;
 }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
         id: photo.id, disabled,
@@ -19,7 +20,7 @@ function GalleryCard({ photo, index, disabled, onPreview, count, pressed }: {
             style={{ transform: CSS.Transform.toString(transform), transition }}
             {...attributes} {...listeners}
             aria-disabled={undefined}
-            aria-label={count ? `เปิดกลุ่ม ${count} รูป` : `เปิดรูปที่ ${index + 1}`}
+            aria-label={member ? `เปิดรูปในกลุ่มที่ ${index + 1}` : count ? `เปิดกลุ่ม ${count} รูป` : `เปิดรูปที่ ${index + 1}`}
             aria-pressed={pressed}
             onContextMenu={(event) => event.preventDefault()}
             onClick={onPreview}>
@@ -30,52 +31,11 @@ function GalleryCard({ photo, index, disabled, onPreview, count, pressed }: {
     );
 }
 
-function GroupMember({ photo, index, checked, onHold, onTap }: {
-    photo: Photo; index: number; checked?: boolean; onHold: () => void; onTap: () => void;
-}) {
-    const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const start = useRef({ x: 0, y: 0 });
-    const held = useRef(false);
-    function cancelHold() {
-        if (pending.current !== null) clearTimeout(pending.current);
-        pending.current = null;
-    }
-    useEffect(() => () => {
-        if (pending.current !== null) clearTimeout(pending.current);
-    }, []);
-    return <button type="button" className="thumbnail" aria-label={`เปิดรูปในกลุ่มที่ ${index + 1}`}
-        aria-pressed={checked}
-        onPointerDown={(event) => {
-            if (!event.isPrimary || event.button !== 0) return;
-            cancelHold();
-            held.current = false;
-            start.current = { x: event.clientX, y: event.clientY };
-            pending.current = setTimeout(() => { held.current = true; onHold(); }, 400);
-        }}
-        onPointerMove={(event) => {
-            if (Math.hypot(event.clientX - start.current.x, event.clientY - start.current.y) > 8) cancelHold();
-        }}
-        onPointerUp={cancelHold} onPointerCancel={cancelHold} onPointerLeave={cancelHold}
-        onContextMenu={(event) => event.preventDefault()}
-        onKeyDown={(event) => {
-            if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                event.preventDefault();
-                onHold();
-            }
-        }}
-        onClick={() => {
-            if (!held.current) onTap();
-            held.current = false;
-        }}>
-        <img src={photo.thumbUrl} alt="" draggable={false} />
-        {checked !== undefined && <span className="selection-check" aria-hidden="true">{checked ? '✓' : ''}</span>}
-    </button>;
-}
-
 export default function PhotoGallery() {
-    const { state, openPreview, reorderPhotos, showToast } = useApp();
+    const { state, openPreview, reorderPhotos, showToast, deletePhoto, dispatch } = useApp();
     const [saving, setSaving] = useState(false);
     const [activeId, setActiveId] = useState<string | null>(null);
+    const draggingMembers = useRef(false);
     const [draftIds, setDraftIds] = useState<string[] | null>(null);
     const [groups, setGroups] = useState<string[][]>(() => {
         try { return JSON.parse(localStorage.getItem('timestamp-photo-groups') ?? '[]'); }
@@ -131,6 +91,56 @@ export default function PhotoGallery() {
 
     const groupSelection = blocks.filter((block) => block.length === 1 && selected.includes(block[0].id)).map(([photo]) => photo.id);
     const splitSelection = openGroup?.filter((photo) => selected.includes(photo.id)) ?? [];
+    const selectedPhotos = mode === 'split' ? splitSelection
+        : blocks.filter((block) => block.length === 1 && selected.includes(block[0].id)).flat();
+    const actionsDisabled = saving || activeId !== null || state.downloadProgress !== null;
+
+    async function downloadSelected() {
+        if (actionsDisabled || !selectedPhotos.length) return;
+        const total = selectedPhotos.length;
+        setSaving(true);
+        dispatch({ type: 'SET_DOWNLOAD_PROGRESS', payload: { current: 0, total } });
+        try {
+            if (total === 1) {
+                const photo = selectedPhotos[0];
+                await downloadOne(photo, state.settings, 'jpeg', 0.92, photos.indexOf(photo));
+            } else {
+                const result = await downloadAll(selectedPhotos, state.settings, 'jpeg', 0.92, (current, total) => {
+                    dispatch({ type: 'SET_DOWNLOAD_PROGRESS', payload: { current, total } });
+                });
+                if (!result.success) throw new Error('Export failed');
+            }
+            showToast(`ดาวน์โหลด ${total} รูปแล้ว`, 'success');
+        } catch {
+            showToast('ดาวน์โหลดรูปที่เลือกไม่สำเร็จ', 'error');
+        } finally {
+            dispatch({ type: 'SET_DOWNLOAD_PROGRESS', payload: null });
+            setSaving(false);
+        }
+    }
+
+    async function deleteSelected() {
+        if (actionsDisabled || !selectedPhotos.length ||
+            !window.confirm(`ย้ายรูปที่เลือก ${selectedPhotos.length} รูปไปถังขยะ?`)) return;
+        setSaving(true);
+        const removed = new Set<string>();
+        try {
+            for (const photo of selectedPhotos) {
+                await deletePhoto(photo.id);
+                removed.add(photo.id);
+            }
+            showToast(`ย้าย ${removed.size} รูปไปถังขยะแล้ว`, 'success');
+        } catch {
+            showToast('ย้ายรูปไปถังขยะไม่ครบ กรุณาลองอีกครั้ง', 'error');
+        } finally {
+            if (mode === 'split') {
+                const remaining = openGroup?.filter((photo) => !removed.has(photo.id)) ?? [];
+                setExpanded(remaining.length > 1 ? remaining[0].id : null);
+            }
+            leaveSelection();
+            setSaving(false);
+        }
+    }
 
     function splitGroup(all: boolean) {
         if (!openGroup || (!all && !splitSelection.length)) return;
@@ -149,26 +159,43 @@ export default function PhotoGallery() {
         if (galleryRef.current) galleryRef.current.scrollLeft = galleryRef.current.scrollWidth;
     }, [state.photos.length]);
 
-    const finishDrag = async ({ active, over }: DragEndEvent) => {
+    const finishDrag = async ({ active, over }: DragEndEvent, members?: Photo[]) => {
         setActiveId(null);
         suppressClickUntil.current = Date.now() + 250;
         if (!over || active.id === over.id || saving) return;
-        const from = ids.indexOf(String(active.id));
-        const to = ids.indexOf(String(over.id));
+        const rowIds = members?.map((photo) => photo.id) ?? ids;
+        const from = rowIds.indexOf(String(active.id));
+        const to = rowIds.indexOf(String(over.id));
         if (from < 0 || to < 0) return;
-        const ordered = arrayMove(blocks, from, to).flatMap((block) => block.map((photo) => photo.id));
+        const movedMembers = members ? arrayMove(rowIds, from, to) : null;
+        const memberIds = new Set(rowIds);
+        let memberIndex = 0;
+        // Reassign only the group's occupied positions; other gallery photos keep their slots.
+        const ordered = movedMembers
+            ? photos.map(({ id }) => memberIds.has(id) ? movedMembers[memberIndex++] : id)
+            : arrayMove(blocks, from, to).flatMap((block) => block.map((photo) => photo.id));
+        if (movedMembers) setExpanded(movedMembers[0]);
         setDraftIds(ordered);
         setSaving(true);
         try { await reorderPhotos(ordered); }
-        catch { showToast('บันทึกลำดับไม่สำเร็จ กรุณาลองอีกครั้ง', 'error'); }
+        catch {
+            if (members) setExpanded(members[0].id);
+            showToast('บันทึกลำดับไม่สำเร็จ กรุณาลองอีกครั้ง', 'error');
+        }
         finally { setDraftIds(null); setSaving(false); }
     };
 
     return (
         <div className="photo-gallery">
             {mode && <div className="gallery-group-actions" aria-label="คำสั่งเลือกภาพ">
-                <button type="button" className="btn btn-secondary" onClick={leaveSelection}>ยกเลิก</button>
-                {mode === 'group' && groupSelection.length > 1 && <button type="button" className="btn btn-primary" disabled={saving}
+                <button type="button" className="btn btn-secondary" disabled={actionsDisabled} onClick={leaveSelection}>ยกเลิก</button>
+                {selectedPhotos.length > 0 && <>
+                    <button type="button" className="btn btn-secondary" disabled={actionsDisabled}
+                        onClick={() => void downloadSelected()}>ดาวน์โหลดที่เลือก</button>
+                    <button type="button" className="btn btn-danger" disabled={actionsDisabled}
+                        onClick={() => void deleteSelected()}>ลบที่เลือก</button>
+                </>}
+                {mode === 'group' && groupSelection.length > 1 && <button type="button" className="btn btn-primary" disabled={actionsDisabled}
                     onClick={() => {
                         const next = groups.map((group) => group.filter((id) => !groupSelection.includes(id))).filter((group) => group.length > 1);
                         if (saveGroups([...next, groupSelection])) {
@@ -176,21 +203,43 @@ export default function PhotoGallery() {
                             leaveSelection();
                         }
                     }}>จับกลุ่ม {groupSelection.length} รูป</button>}
-                {mode === 'split' && splitSelection.length > 0 && <button type="button" className="btn btn-primary"
+                {mode === 'split' && splitSelection.length > 0 && <button type="button" className="btn btn-primary" disabled={actionsDisabled}
                     onClick={() => splitGroup(false)}>แยกออกจากกลุ่ม</button>}
-                {mode === 'split' && <button type="button" className="btn btn-secondary"
+                {mode === 'split' && <button type="button" className="btn btn-secondary" disabled={actionsDisabled}
                     onClick={() => splitGroup(true)}>สลายกลุ่ม</button>}
             </div>}
-            {openGroup && openGroup.length > 1 && <div className="gallery-strip" aria-label="รูปในกลุ่ม">
-                {openGroup.map((photo, index) => <GroupMember key={photo.id} photo={photo} index={index}
-                    checked={mode === 'split' ? selected.includes(photo.id) : undefined}
-                    onHold={() => {
-                        if (mode !== 'split') { setMode('split'); setSelected([]); }
-                    }}
-                    onTap={() => mode === 'split' ? toggleSelection(photo.id) : openPreview(photo.id)} />)}
-            </div>}
+            {openGroup && openGroup.length > 1 && <DndContext sensors={sensors} collisionDetection={closestCenter}
+                autoScroll modifiers={dragModifiers}
+                onDragStart={({ active, activatorEvent }) => {
+                    draggingMembers.current = true;
+                    suppressClickUntil.current = Infinity;
+                    setActiveId(String(active.id));
+                    if (activatorEvent.type !== 'keydown' && mode !== 'split') {
+                        setMode('split');
+                        setSelected([]);
+                    }
+                }}
+                onDragCancel={() => { setActiveId(null); suppressClickUntil.current = Date.now() + 250; }}
+                onDragEnd={(event) => void finishDrag(event, openGroup)}>
+                <div className="gallery-strip" aria-label="รูปในกลุ่ม">
+                    <SortableContext items={openGroup.map((photo) => photo.id)} strategy={horizontalListSortingStrategy}>
+                        {openGroup.map((photo, index) => <GalleryCard key={photo.id} photo={photo} index={index} member
+                            disabled={saving} pressed={mode === 'split' ? selected.includes(photo.id) : undefined}
+                            onPreview={() => {
+                                if (Date.now() < suppressClickUntil.current) return;
+                                if (mode === 'split') toggleSelection(photo.id);
+                                else openPreview(photo.id);
+                            }} />)}
+                    </SortableContext>
+                </div>
+                <DragOverlay dropAnimation={{ duration: 180, easing: 'ease-out' }}>
+                    {activePhoto && draggingMembers.current &&
+                        <div className="thumbnail drag-overlay" aria-hidden="true"><img src={activePhoto.thumbUrl} alt="" /></div>}
+                </DragOverlay>
+            </DndContext>}
             <DndContext sensors={sensors} collisionDetection={closestCenter} autoScroll modifiers={dragModifiers}
                 onDragStart={({ active, activatorEvent }) => {
+                    draggingMembers.current = false;
                     suppressClickUntil.current = Infinity;
                     setActiveId(String(active.id));
                     if (activatorEvent.type !== 'keydown' && mode !== 'group') {
@@ -199,7 +248,7 @@ export default function PhotoGallery() {
                         setMode('group');
                     }
                 }}
-                onDragCancel={() => { setActiveId(null); suppressClickUntil.current = Date.now() + 250; }} onDragEnd={finishDrag}>
+                onDragCancel={() => { setActiveId(null); suppressClickUntil.current = Date.now() + 250; }} onDragEnd={(event) => void finishDrag(event)}>
                 <div className={`gallery-strip ${activeId ? 'is-sorting' : ''}`} ref={galleryRef} aria-busy={saving}>
                     <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
                         {blocks.map(([photo, ...rest], index) => <GalleryCard key={photo.id} photo={photo} index={index}
@@ -218,7 +267,7 @@ export default function PhotoGallery() {
                     </SortableContext>
                 </div>
                 <DragOverlay dropAnimation={{ duration: 180, easing: 'ease-out' }}>
-                    {activePhoto && <div className="thumbnail drag-overlay" aria-hidden="true">
+                    {activePhoto && !draggingMembers.current && <div className="thumbnail drag-overlay" aria-hidden="true">
                         <img src={activePhoto.thumbUrl} alt="" draggable={false} />
                         <span className="thumbnail-badge">{ids.indexOf(activePhoto.id) + 1}</span>
                     </div>}

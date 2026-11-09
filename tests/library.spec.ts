@@ -140,14 +140,61 @@ test('long press groups from the leftmost selected card and supports partial and
     await hold(memberRow.locator('.thumbnail').first());
     await expect(page.getByRole('button', { name: 'สลายกลุ่ม' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'แยกออกจากกลุ่ม' })).toHaveCount(0);
+    await page.waitForTimeout(260);
     await memberRow.locator('.thumbnail').first().click();
     await page.getByRole('button', { name: 'แยกออกจากกลุ่ม' }).click();
     await expect(group(2)).toBeVisible();
     await expect(memberRow.locator('.thumbnail')).toHaveCount(2);
     await hold(memberRow.locator('.thumbnail').last());
+    await page.waitForTimeout(260);
     await page.getByRole('button', { name: 'สลายกลุ่ม' }).click();
     await expect(main.locator('.thumbnail')).toHaveCount(5);
     await expect(memberRow).toHaveCount(0);
+});
+
+test('group members drag independently and selected download and trash work in both rows', async ({ page }) => {
+    await seed(page, 5);
+    await page.evaluate(() => localStorage.setItem('timestamp-photo-groups', JSON.stringify([['photo-0', 'photo-2', 'photo-3']])));
+    await page.reload();
+    const main = page.locator('.gallery-strip[aria-busy]');
+    const members = page.locator('.gallery-strip[aria-label="รูปในกลุ่ม"]');
+    const download = page.getByRole('button', { name: 'ดาวน์โหลดที่เลือก' });
+    const remove = page.getByRole('button', { name: 'ลบที่เลือก' });
+    const cancel = page.getByRole('button', { name: 'ยกเลิก', exact: true });
+    const group = main.getByRole('button', { name: 'เปิดกลุ่ม 3 รูป' });
+    async function drag(row: ReturnType<Page['locator']>, from: number, to: number) {
+        const cards = row.locator('.thumbnail');
+        const start = (await cards.nth(from).boundingBox())!;
+        const end = (await cards.nth(to).boundingBox())!;
+        await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+        await page.mouse.down();
+        await expect(page.locator('.drag-overlay')).toHaveCount(1);
+        if (from !== to) await page.mouse.move(end.x + end.width / 2, end.y + end.height / 2, { steps: 12 });
+        await page.mouse.up();
+        await page.waitForTimeout(260);
+    }
+    async function downloadAndRemove() {
+        await expect(download).toBeVisible();
+        const file = page.waitForEvent('download', { timeout: 5000 });
+        await download.click();
+        expect((await file).suggestedFilename()).toMatch(/\.jpg$/);
+        page.once('dialog', (dialog) => void dialog.accept());
+        await remove.click();
+    }
+    await group.click();
+    await drag(members, 0, 2);
+    await expect.poll(() => savedOrder(page)).toEqual(['photo-2', 'photo-1', 'photo-3', 'photo-0', 'photo-4']);
+    await expect(download).toHaveCount(0);
+    await members.locator('.thumbnail').first().click();
+    await downloadAndRemove();
+    await expect(members.locator('.thumbnail')).toHaveCount(2);
+    await expect(cancel).toHaveCount(0);
+    await drag(main, 0, 0);
+    await main.locator('.thumbnail').first().click();
+    await downloadAndRemove();
+    await expect(main.locator('.thumbnail')).toHaveCount(2);
+    await page.getByTitle('ถังขยะ', { exact: true }).click();
+    await expect(page.locator('.trash-item')).toHaveCount(2);
 });
 
 test('deleting a card during background trash loading does not lose or duplicate it', async ({ page }) => {
