@@ -850,3 +850,13 @@ button.thumbnail { padding: 0; background: transparent; font: inherit; }
 .trash-load-status { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px 12px; text-align: center; }
 .trash-load-status progress { width: min(100%, 320px); accent-color: var(--accent); }
 .trash-reminder-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.gallery-group-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-block: 0.35rem;
+}
+
+.thumbnail[aria-pressed="true"] {
+    outline: 2px solid #52dbbf;
+    outline-offset: -2px;
+}

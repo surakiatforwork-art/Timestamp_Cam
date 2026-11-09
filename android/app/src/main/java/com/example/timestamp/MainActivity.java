@@ -28,18 +28,43 @@ import java.util.List;
 public class MainActivity extends BridgeActivity {
     
     private static final int PERMISSION_REQUEST_CODE = 100;
+    final java.util.concurrent.ConcurrentLinkedQueue<Uri> sharedImages = new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(MediaStorePlugin.class);
         registerPlugin(DeviceFeedbackPlugin.class);
         registerPlugin(PhotoStoragePlugin.class);
+        registerPlugin(SharedImagesPlugin.class);
         super.onCreate(savedInstanceState);
+        if (savedInstanceState == null) enqueueImages(getIntent());
         
         // Request permissions on startup
         requestRequiredPermissions();
     }
     
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        enqueueImages(intent);
+        emitWebLifecycleEvent("native-shared-images");
+    }
+
+    @SuppressWarnings("deprecation")
+    private void enqueueImages(Intent intent) {
+        if (intent == null || intent.getType() == null || !intent.getType().startsWith("image/")) return;
+        if (Intent.ACTION_SEND_MULTIPLE.equals(intent.getAction())) {
+            ArrayList<Uri> items = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (items != null) for (Uri item : items) enqueueImage(item);
+        } else if (Intent.ACTION_SEND.equals(intent.getAction())) {
+            enqueueImage(intent.getParcelableExtra(Intent.EXTRA_STREAM));
+        }
+    }
+
+    private void enqueueImage(Uri uri) {
+        if (uri != null && "content".equals(uri.getScheme())) sharedImages.add(uri);
+    }
+
     @Override
     public void onStart() {
         super.onStart();

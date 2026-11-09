@@ -10,6 +10,7 @@ import MapModal from './components/modals/MapModal';
 import TrashModal from './components/modals/TrashModal';
 import DownloadProgressModal from './components/common/DownloadProgressModal';
 import TrashReminder from './components/common/TrashReminder';
+import SharedImageImport from './components/common/SharedImageImport';
 
 function App() {
     const { state, retryPhotoStorage } = useApp();
@@ -42,6 +43,7 @@ function App() {
             <Topbar />
             <Stage />
             <BottomControls />
+            <SharedImageImport />
 
             <Toast />
             <DownloadProgressModal />

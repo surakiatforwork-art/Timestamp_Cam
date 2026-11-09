@@ -74,7 +74,7 @@ export function useCapture() {
 
     // Import from files
     const importPhotos = useCallback(
-        async (files: FileList | File[]) => {
+        async (files: FileList | File[], ordered = false) => {
             const fileArray = Array.from(files);
             log(`Importing ${fileArray.length} files`);
 
@@ -127,7 +127,7 @@ export function useCapture() {
                     await processFile(file);
                 }
             };
-            await Promise.all(Array.from({ length: Math.min(2, fileArray.length) }, worker));
+            await Promise.all(Array.from({ length: Math.min(ordered ? 1 : 2, fileArray.length) }, worker));
             dispatch({ type: 'SET_IMPORT_PROGRESS', payload: null });
 
             if (successCount > 0) {
