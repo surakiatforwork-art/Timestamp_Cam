@@ -852,9 +852,28 @@ button.thumbnail { padding: 0; background: transparent; font: inherit; }
 .trash-reminder-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .gallery-group-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
     margin-block: 0.35rem;
 }
+
+.selection-check {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    width: 21px;
+    height: 21px;
+    display: grid;
+    place-items: center;
+    border: 2px solid white;
+    border-radius: 5px;
+    background: #122622cc;
+    color: white;
+    font-weight: bold;
+    pointer-events: none;
+}
+
+.thumbnail[aria-pressed="true"] .selection-check { background: #126b56; }
 
 .thumbnail[aria-pressed="true"] {
     outline: 2px solid #52dbbf;

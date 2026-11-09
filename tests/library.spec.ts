@@ -98,6 +98,7 @@ test('pointer and keyboard sorting persist; previews reflect the saved order', a
     await expect.poll(async () => (await page.locator('.drag-overlay').boundingBox())!.x).toBeGreaterThan(keyboardStart.x + 20);
     await page.keyboard.press('Space');
     await expect.poll(() => savedOrder(page)).toEqual(['photo-2', 'photo-1', 'photo-0', 'photo-3']);
+    await page.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
     await page.waitForTimeout(300); // The drop-release click must not open a preview.
     await page.locator('.thumbnail').first().click();
     await expect(page.getByRole('heading', { name: 'รูปที่ 1 / 4', exact: true })).toBeVisible();
@@ -105,6 +106,48 @@ test('pointer and keyboard sorting persist; previews reflect the saved order', a
     await expect(page.locator('.thumbnail')).toHaveCount(4);
     expect(await savedOrder(page)).toEqual(['photo-2', 'photo-1', 'photo-0', 'photo-3']);
     await page.screenshot({ path: `test-results/sorting-${test.info().project.name}.png` });
+});
+
+test('long press groups from the leftmost selected card and supports partial and full split', async ({ page }) => {
+    await seed(page, 5);
+    const main = page.locator('.gallery-strip[aria-busy]');
+    const memberRow = page.locator('.gallery-strip[aria-label="รูปในกลุ่ม"]');
+    const cancel = page.getByRole('button', { name: 'ยกเลิก', exact: true });
+    const group = (count: number) => main.getByRole('button', { name: `เปิดกลุ่ม ${count} รูป`, exact: true });
+    async function hold(card: ReturnType<Page['locator']>) {
+        await card.scrollIntoViewIfNeeded();
+        const box = (await card.boundingBox())!;
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        await expect(cancel).toBeVisible();
+        await page.mouse.up();
+    }
+
+    await expect(cancel).toHaveCount(0);
+    await hold(main.locator('.thumbnail').nth(1));
+    // The long-press release is suppressed, so taps start after the drop guard.
+    await expect(page.locator('.drag-overlay')).toHaveCount(0);
+    await page.waitForTimeout(260);
+    await main.locator('.thumbnail').nth(4).click();
+    await expect(page.getByRole('button', { name: /จับกลุ่ม/ })).toHaveCount(0);
+    await main.locator('.thumbnail').nth(1).click();
+    await main.locator('.thumbnail').nth(3).click();
+    await page.getByRole('button', { name: 'จับกลุ่ม 3 รูป' }).click();
+    await expect(main.locator('.thumbnail').nth(1)).toHaveAccessibleName('เปิดกลุ่ม 3 รูป');
+    await page.reload();
+    await group(3).click();
+    await expect(memberRow.locator('.thumbnail')).toHaveCount(3);
+    await hold(memberRow.locator('.thumbnail').first());
+    await expect(page.getByRole('button', { name: 'สลายกลุ่ม' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'แยกออกจากกลุ่ม' })).toHaveCount(0);
+    await memberRow.locator('.thumbnail').first().click();
+    await page.getByRole('button', { name: 'แยกออกจากกลุ่ม' }).click();
+    await expect(group(2)).toBeVisible();
+    await expect(memberRow.locator('.thumbnail')).toHaveCount(2);
+    await hold(memberRow.locator('.thumbnail').last());
+    await page.getByRole('button', { name: 'สลายกลุ่ม' }).click();
+    await expect(main.locator('.thumbnail')).toHaveCount(5);
+    await expect(memberRow).toHaveCount(0);
 });
 
 test('deleting a card during background trash loading does not lose or duplicate it', async ({ page }) => {
