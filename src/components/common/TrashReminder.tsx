@@ -1,3 +1,4 @@
+import { useBackHandler } from '../../lib/backNavigation';
 import { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 
@@ -12,6 +13,10 @@ export default function TrashReminder() {
         return () => { window.clearInterval(timer); window.removeEventListener('native-app-resume', refresh); };
     }, []);
     const oldCount = state.trashPhotos.filter((photo) => now - Date.parse(photo.deletedAtISO) > 30 * 86400000).length;
+    useBackHandler(85,()=>{
+        if(dismissed || state.trashStatus!=='ready' || !oldCount || state.activeModal!=='none' || state.downloadProgress || state.importProgress)return false;
+        setDismissed(true);return true;
+    });
     if (dismissed || state.trashStatus !== 'ready' || !oldCount || state.activeModal !== 'none'
         || state.downloadProgress || state.importProgress) return null;
 

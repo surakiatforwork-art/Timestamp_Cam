@@ -1,4 +1,7 @@
-import { useEffect } from 'react';
+import { isConfirmOpen } from '../common/ConfirmDialog';
+import { CalendarDays, RefreshCw, Timer, ImagePlus, LoaderCircle } from 'lucide-react';
+import { useEffect, useLayoutEffect, useState } from 'react';
+import { setHardwareShutter } from '../../lib/deviceFeedback';
 import { useApp } from '../../context/AppContext';
 import { useCamera } from '../../hooks/useCamera';
 import { useCapture } from '../../hooks/useCapture';
@@ -7,7 +10,7 @@ import DateTimeWheelPicker from '../common/DateTimeWheelPicker';
 import PhotoGallery from './PhotoGallery';
 
 export default function BottomControls() {
-    const { state, dispatch, deleteAllPhotos, showToast } = useApp();
+    const { state, dispatch } = useApp();
     const { videoRef, cameraOn, cameraStatus, hasMultipleCameras, switchCamera } = useCamera();
     const { capturePhoto, importPhotos, isCapturing } = useCapture();
 
@@ -24,18 +27,18 @@ export default function BottomControls() {
         return () => window.removeEventListener('do-import', handleImport);
     }, [importPhotos]);
 
+    const [pickerOpen, setPickerOpen] = useState(false);
+    useEffect(() => {
+        const open = () => setPickerOpen(true), close = () => setPickerOpen(false);
+        window.addEventListener('timestamp-picker-open', open);
+        window.addEventListener('timestamp-picker-close', close);
+        return () => { window.removeEventListener('timestamp-picker-open', open); window.removeEventListener('timestamp-picker-close', close); };
+    }, []);
     const handleCapture = async () => {
-        if (!videoRef.current || cameraStatus !== 'ready') return;
+        if (!cameraOn || !videoRef.current || cameraStatus !== 'ready' || isCapturing || state.activeModal !== "none" || pickerOpen || isConfirmOpen() || state.importProgress || state.downloadProgress) return;
         await capturePhoto(videoRef.current);
     };
 
-
-    const handleDeleteAll = async () => {
-        if (photos.length === 0) return;
-        if (!confirm(`ลบรูปทั้งหมด ${photos.length} รูป?`)) return;
-        await deleteAllPhotos();
-        showToast('ลบรูปทั้งหมดแล้ว', 'info');
-    };
 
     const timeSummary = formatTimeSummary(settings.globalTimeMode, settings.globalCustomTime);
     const locationSummary = formatLocationSummary(
@@ -45,6 +48,16 @@ export default function BottomControls() {
         settings.cachedAddress
     );
 
+    useEffect(() => {
+        const active = cameraOn && cameraStatus === 'ready' && state.activeModal === 'none' && !pickerOpen && !state.importProgress && !state.downloadProgress;
+        setHardwareShutter(active);
+        return () => setHardwareShutter(false);
+    }, [cameraOn, cameraStatus, state.activeModal, pickerOpen, state.importProgress, state.downloadProgress]);
+    useLayoutEffect(() => {
+        const shutter = () => { void handleCapture(); };
+        window.addEventListener('native-hardware-shutter', shutter);
+        return () => window.removeEventListener('native-hardware-shutter', shutter);
+    });
     const canCapture = cameraOn && cameraStatus === 'ready' && !isCapturing;
     const canSwitchCamera = cameraOn && hasMultipleCameras && cameraStatus === 'ready';
 
@@ -68,7 +81,7 @@ export default function BottomControls() {
                         title={settings.globalTimeMode === 'now' ? 'ใช้เวลาปัจจุบัน' : 'ใช้เวลากำหนดเอง'}
                     >
                         <span className="toggle-knob">
-                            {settings.globalTimeMode === 'now' ? '⏱️' : '📅'}
+                            {settings.globalTimeMode === 'now' ? <Timer className="ui-icon" aria-hidden="true" /> : <CalendarDays className="ui-icon" aria-hidden="true" />}
                         </span>
                     </button>
                 </div>
@@ -100,12 +113,10 @@ export default function BottomControls() {
             {/* Action Buttons */}
             <div className="action-buttons">
                 <div className="action-btn-left">
-                    <button
-                        className="delete-all-btn"
-                        onClick={handleDeleteAll}
-                        disabled={photos.length === 0}
-                    >
-                        🗑️ ลบทั้งหมด
+                    <button className="capture-side-btn" onClick={() => window.dispatchEvent(new Event('timestamp-open-import'))}
+                        disabled={state.importProgress !== null} title="นำเข้ารูป">
+                        {state.importProgress ? <LoaderCircle className="ui-icon spinning" aria-hidden="true" /> : <ImagePlus className="ui-icon" aria-hidden="true" />}
+                        <span>นำเข้ารูป</span>
                     </button>
                 </div>
 
@@ -113,17 +124,18 @@ export default function BottomControls() {
                     className={`shutter-btn ${isCapturing ? 'is-capturing' : ''}`}
                     onClick={handleCapture}
                     disabled={!canCapture}
-                    title="ถ่ายรูป"
+                    title="ถ่ายรูป" aria-label="ถ่ายรูป"
                 />
 
                 <div className="action-btn-right">
                     <button
-                        className="switch-cam-btn"
+                        className="capture-side-btn"
                         onClick={switchCamera}
                         disabled={!canSwitchCamera}
                         title="สลับกล้อง"
                     >
-                        🔄
+                        <RefreshCw className="ui-icon" aria-hidden="true" />
+                        <span>สลับกล้อง</span>
                     </button>
                 </div>
             </div>

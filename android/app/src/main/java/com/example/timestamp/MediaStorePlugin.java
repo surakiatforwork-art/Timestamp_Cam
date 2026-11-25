@@ -56,7 +56,7 @@ public class MediaStorePlugin extends Plugin {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ContentValues completed = new ContentValues();
                 completed.put(MediaStore.Images.Media.IS_PENDING, 0);
-                resolver.update(uri, completed, null, null);
+                if (resolver.update(uri, completed, null, null) < 1) throw new IOException("Unable to publish saved image");
             }
 
             JSObject result = new JSObject();

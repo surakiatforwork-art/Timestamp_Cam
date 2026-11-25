@@ -14,6 +14,14 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "DeviceFeedback")
 public class DeviceFeedbackPlugin extends Plugin {
     @PluginMethod
+    public void setShutterEnabled(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            if (getActivity() instanceof MainActivity) ((MainActivity) getActivity()).setShutterEnabled(Boolean.TRUE.equals(call.getBoolean("enabled")));
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
     public void vibrate(PluginCall call) {
         int duration = Math.max(1, Math.min(200, call.getInt("duration", 35)));
         Vibrator vibrator;

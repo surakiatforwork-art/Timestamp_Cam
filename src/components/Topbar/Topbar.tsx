@@ -1,11 +1,14 @@
+import { useEffect } from 'react';
+import { CameraIcon, CameraOff, Download, Flashlight, FlashlightOff, LoaderCircle, Settings, Trash2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { useCamera } from '../../hooks/useCamera';
 import { Camera } from '@capacitor/camera';
 import { downloadAll } from '../../lib/download';
+import { finishDownload } from '../../lib/downloadCleanup';
 import { log } from '../../lib/logger';
 
 export default function Topbar() {
-    const { state, dispatch, showToast } = useApp();
+    const { state, dispatch, showToast, trashPhotos } = useApp();
     const { cameraOn, toggleCameraOn, torchOn, toggleTorch, hasTorch, cameraStatus } = useCamera();
     const handleImport = async () => {
         try {
@@ -40,10 +43,15 @@ export default function Topbar() {
             }
         }
     };
+    useEffect(() => {
+        const open = () => { if (!state.importProgress) void handleImport(); };
+        window.addEventListener('timestamp-open-import', open);
+        return () => window.removeEventListener('timestamp-open-import', open);
+    });
     // Removed handleFileChange as we don't use input[type=file] anymore
 
     const handleDownloadAll = async () => {
-        if (state.photos.length === 0) return;
+        if (state.photos.length === 0 || state.downloadProgress || state.importProgress) return;
 
         log('Starting download all');
         dispatch({ type: 'SET_DOWNLOAD_PROGRESS', payload: { current: 0, total: state.photos.length } });
@@ -59,17 +67,11 @@ export default function Topbar() {
                 }
             );
 
-            dispatch({ type: 'SET_DOWNLOAD_PROGRESS', payload: null });
-
-            if (result.success) {
-                showToast(`ดาวน์โหลดสำเร็จ (${result.method})`, 'success');
-                log(`Download all completed: ${result.method}`);
-            }
+            await finishDownload(result,state.photos.length,state.settings.autoTrashAfterDownload,trashPhotos,showToast);
         } catch (e) {
-            dispatch({ type: 'SET_DOWNLOAD_PROGRESS', payload: null });
             log(`Download all failed: ${e}`, 'error');
             showToast('ดาวน์โหลดไม่สำเร็จ', 'error');
-        }
+        } finally { dispatch({ type: 'SET_DOWNLOAD_PROGRESS', payload: null }); }
     };
 
     const handleSettings = () => {
@@ -89,20 +91,8 @@ export default function Topbar() {
                     title={cameraOn ? 'ปิดกล้อง' : 'เปิดกล้อง'}
                 >
                     <span className="camera-toggle-knob">
-                        {cameraOn ? '📷' : '🚫'}
+                        {cameraOn ? <CameraIcon className="ui-icon" aria-hidden="true" /> : <CameraOff className="ui-icon" aria-hidden="true" />}
                     </span>
-                </button>
-            </div>
-
-            <div className="topbar-center" aria-hidden="true" />
-
-            <div className="topbar-right">
-                <button
-                    className="icon-btn"
-                    onClick={() => dispatch({ type: 'SET_ACTIVE_MODAL', payload: 'trash' })}
-                    title="ถังขยะ"
-                >
-                    🗑️
                 </button>
                 {/* Torch */}
                 <button
@@ -111,20 +101,14 @@ export default function Topbar() {
                     disabled={!canUseTorch}
                     title="แฟลช"
                 >
-                    {torchOn ? '🔦' : '💡'}
+                    {torchOn ? <Flashlight className="ui-icon" aria-hidden="true" /> : <FlashlightOff className="ui-icon" aria-hidden="true" />}
                 </button>
 
-                {/* Import */}
-                <button
-                    className="icon-btn"
-                    onClick={handleImport}
-                    disabled={state.importProgress !== null}
-                    title={state.importProgress ? `กำลังนำเข้า ${state.importProgress.current}/${state.importProgress.total}` : 'นำเข้ารูป'}
-                >
-                    {state.importProgress ? '⏳' : '📥'}
-                </button>
+            </div>
 
+            <div className="topbar-center" aria-hidden="true" />
 
+            <div className="topbar-right">
                 {/* Download All */}
                 <button
                     className="icon-btn"
@@ -132,16 +116,24 @@ export default function Topbar() {
                     disabled={state.photos.length === 0 || state.downloadProgress !== null}
                     title="ดาวน์โหลดทั้งหมด"
                 >
-                    {state.downloadProgress ? '⏳' : '💾'}
+                    {state.downloadProgress ? <LoaderCircle className="ui-icon spinning" aria-hidden="true" /> : <Download className="ui-icon" aria-hidden="true" />}
                 </button>
 
+                <span className="toolbar-divider" aria-hidden="true" />
+                <button
+                    className="icon-btn"
+                    onClick={() => dispatch({ type: 'SET_ACTIVE_MODAL', payload: 'trash' })}
+                    title="ถังขยะ"
+                >
+                    <Trash2 className="ui-icon" aria-hidden="true" />
+                </button>
                 {/* Settings */}
                 <button
                     className="icon-btn"
                     onClick={handleSettings}
                     title="ตั้งค่า"
                 >
-                    ⚙️
+                    <Settings className="ui-icon" aria-hidden="true" />
                 </button>
             </div>
         </header>

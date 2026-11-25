@@ -27,16 +27,60 @@ import java.util.List;
 
 public class MainActivity extends BridgeActivity {
     
+    private boolean shutterEnabled = false;
+    private boolean backPending = false;
+    private final java.util.Set<Integer> heldShutterKeys = new java.util.HashSet<>();
+    public void setShutterEnabled(boolean enabled) { shutterEnabled = enabled; }
+
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        final int key = event.getKeyCode();
+        if (key == android.view.KeyEvent.KEYCODE_VOLUME_DOWN || key == android.view.KeyEvent.KEYCODE_VOLUME_UP) {
+            if (event.getAction() == android.view.KeyEvent.ACTION_DOWN && hasWindowFocus()) {
+                if (heldShutterKeys.contains(key)) return true;
+                if (shutterEnabled && event.getRepeatCount() == 0) {
+                    // Either key is a shutter; a simultaneous two-key press is one capture.
+                    final boolean firstKey = heldShutterKeys.isEmpty();
+                    heldShutterKeys.add(key);
+                    if (firstKey) emitWebLifecycleEvent("native-hardware-shutter");
+                    return true;
+                }
+            }
+            if (event.getAction() == android.view.KeyEvent.ACTION_UP && heldShutterKeys.remove(key)) {
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus) heldShutterKeys.clear();
+    }
+
     private static final int PERMISSION_REQUEST_CODE = 100;
     final java.util.concurrent.ConcurrentLinkedQueue<Uri> sharedImages = new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(MediaStorePlugin.class);
+        registerPlugin(AppUpdatePlugin.class);
         registerPlugin(DeviceFeedbackPlugin.class);
         registerPlugin(PhotoStoragePlugin.class);
         registerPlugin(SharedImagesPlugin.class);
         super.onCreate(savedInstanceState);
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (backPending) return;
+                if (getBridge() == null || getBridge().getWebView() == null) { moveTaskToBack(true); return; }
+                backPending = true;
+                getBridge().getWebView().evaluateJavascript(
+                    "typeof window.timestampHandleBack === 'function' ? window.timestampHandleBack() : false",
+                    result -> { backPending = false; if ("false".equals(result) && hasWindowFocus()) moveTaskToBack(true); }
+                );
+            }
+        });
         if (savedInstanceState == null) enqueueImages(getIntent());
         
         // Request permissions on startup
@@ -74,6 +118,8 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onPause() {
+        shutterEnabled = false;
+        heldShutterKeys.clear();
         emitWebLifecycleEvent("native-app-pause");
         super.onPause();
     }

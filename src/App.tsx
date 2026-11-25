@@ -1,4 +1,7 @@
 import './App.css';
+import { useEffect } from 'react';
+import { handleBack, useBackHandler } from './lib/backNavigation';
+import ConfirmDialog from './components/common/ConfirmDialog';
 import { useApp } from './context/AppContext';
 import Topbar from './components/Topbar/Topbar';
 import Stage from './components/Stage/Stage';
@@ -15,6 +18,18 @@ import SharedImageImport from './components/common/SharedImageImport';
 function App() {
     const { state, retryPhotoStorage } = useApp();
 
+    useBackHandler(80,()=>state.storageStatus!=='ready' || !!state.downloadProgress || !!state.importProgress);
+    useEffect(()=>{
+        const appWindow=window as Window & {timestampHandleBack?:()=>boolean};
+        appWindow.timestampHandleBack=handleBack;
+        const escape=(event:KeyboardEvent)=>{
+            if(event.key==='Escape' && !event.defaultPrevented && handleBack()) {event.preventDefault();event.stopPropagation();}
+        };
+        const native=()=>handleBack();
+        window.addEventListener('keydown',escape);
+        window.addEventListener('native-app-back',native);
+        return ()=>{delete appWindow.timestampHandleBack;window.removeEventListener('keydown',escape);window.removeEventListener('native-app-back',native);};
+    },[]);
     if (state.storageStatus !== 'ready') {
         return (
             <div className="app">
@@ -46,6 +61,7 @@ function App() {
             <SharedImageImport />
 
             <Toast />
+            <ConfirmDialog />
             <DownloadProgressModal />
             <TrashReminder />
 

@@ -28,7 +28,8 @@ export default function OverlayFrameEditor({ timeFrame, locationFrame, aspectRat
     const move = (event: React.PointerEvent<HTMLDivElement>) => {
         const active = interaction.current;
         const bounds = editorRef.current?.getBoundingClientRect();
-        if (!active || !bounds) return;
+        if (!active || !bounds || !bounds.width || !bounds.height) return;
+        if (Math.hypot(event.clientX - active.startX, event.clientY - active.startY) < 5) return;
 
         const deltaX = (event.clientX - active.startX) / bounds.width;
         const deltaY = (event.clientY - active.startY) / bounds.height;
@@ -60,6 +61,7 @@ export default function OverlayFrameEditor({ timeFrame, locationFrame, aspectRat
             onPointerMove={move}
             onPointerUp={() => { interaction.current = null; }}
             onPointerCancel={() => { interaction.current = null; }}
+            onLostPointerCapture={() => { interaction.current = null; }}
         >
             <div className="overlay-frame time-frame" style={frameStyle(timeFrame)} onPointerDown={(event) => begin(event, 'time', 'move')}>
                 <span>เวลา</span>

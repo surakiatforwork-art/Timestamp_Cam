@@ -1,79 +1,8 @@
+import { useBackHandler } from '../../lib/backNavigation';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
-interface PickerColumnProps {
-    label: string;
-    values: number[];
-    selected: number;
-    format: (value: number) => string;
-    onChange: (value: number) => void;
-    cyclic?: boolean;
-}
-
-const ITEM_HEIGHT = 42;
-const CYCLE_COPIES = 7;
-
-function PickerColumn({ label, values, selected, format, onChange, cyclic = false }: PickerColumnProps) {
-    const ref = useRef<HTMLDivElement>(null);
-    const scrollTimer = useRef<number | null>(null);
-    const hasPositioned = useRef(false);
-    const items = cyclic ? Array.from({ length: CYCLE_COPIES }, () => values).flat() : values;
-    const middleOffset = cyclic ? values.length * Math.floor(CYCLE_COPIES / 2) : 0;
-
-    useEffect(() => {
-        const index = Math.max(0, values.indexOf(selected));
-        const element = ref.current;
-        if (!element) return;
-        const activeIndex = Math.round(element.scrollTop / ITEM_HEIGHT);
-        const activeValue = cyclic ? values[((activeIndex % values.length) + values.length) % values.length] : values[activeIndex];
-        if (!hasPositioned.current || activeValue !== selected) {
-            element.scrollTop = (middleOffset + index) * ITEM_HEIGHT;
-            hasPositioned.current = true;
-        }
-    }, [selected, values, cyclic, middleOffset]);
-
-    const selectFromScroll = () => {
-        if (!ref.current) return;
-        const rawIndex = Math.round(ref.current.scrollTop / ITEM_HEIGHT);
-        const index = cyclic
-            ? ((rawIndex % values.length) + values.length) % values.length
-            : Math.max(0, Math.min(values.length - 1, rawIndex));
-        const nextValue = values[index];
-        if (nextValue !== selected) onChange(nextValue);
-
-        // Re-center the same item after the momentum has finished. The visual value
-        // remains unchanged, but there are always more items above and below it.
-        if (cyclic) {
-            ref.current.scrollTop = (middleOffset + index) * ITEM_HEIGHT;
-        }
-    };
-
-    return (
-        <div className="wheel-column">
-            <span>{label}</span>
-            <div
-                className="wheel-scroll"
-                ref={ref}
-                onScroll={() => {
-                    if (scrollTimer.current) window.clearTimeout(scrollTimer.current);
-                    scrollTimer.current = window.setTimeout(selectFromScroll, 70);
-                }}
-            >
-                <div className="wheel-spacer" />
-                {items.map((value, index) => (
-                    <button
-                        type="button"
-                        className={value === selected ? 'selected' : ''}
-                        key={`${index}-${value}`}
-                        onClick={() => onChange(value)}
-                    >
-                        {format(value)}
-                    </button>
-                ))}
-                <div className="wheel-spacer" />
-            </div>
-        </div>
-    );
-}
+import PickerColumn from './PremiumWheel';
 
 interface DateTimeWheelPickerProps {
     value: string;
@@ -97,15 +26,22 @@ function formatDateTime(iso: string): string {
 export default function DateTimeWheelPicker({ value, onChange, className = '' }: DateTimeWheelPickerProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [draft, setDraft] = useState(() => new Date(value));
+    const draftRef = useRef(draft);
+    useBackHandler(90,()=>{if(!isOpen)return false;setIsOpen(false);return true;});
+    useEffect(() => {
+        if (!isOpen) return;
+        window.dispatchEvent(new Event('timestamp-picker-open'));
+        return () => { window.dispatchEvent(new Event('timestamp-picker-close')); };
+    }, [isOpen]);
 
     useEffect(() => {
-        if (!isOpen) setDraft(new Date(value));
+        if (!isOpen) { draftRef.current = new Date(value); setDraft(draftRef.current); }
     }, [value, isOpen]);
 
     const setPart = (part: 'date' | 'month' | 'year' | 'hours' | 'minutes' | 'seconds', next: number) => {
-        setDraft((current) => {
-            const updated = new Date(current);
-            if (part === 'date') updated.setDate(next);
+        {
+            const updated = new Date(draftRef.current);
+            if (part === 'date') updated.setDate(Math.min(next, new Date(updated.getFullYear(), updated.getMonth() + 1, 0).getDate()));
             if (part === 'month' || part === 'year') {
                 const currentDate = updated.getDate();
                 updated.setDate(1);
@@ -116,8 +52,9 @@ export default function DateTimeWheelPicker({ value, onChange, className = '' }:
             if (part === 'hours') updated.setHours(next);
             if (part === 'minutes') updated.setMinutes(next);
             if (part === 'seconds') updated.setSeconds(next);
-            return updated;
-        });
+            draftRef.current = updated;
+            setDraft(updated);
+        }
     };
 
     const years = Array.from({ length: 201 }, (_, index) => 1900 + index);
@@ -133,9 +70,9 @@ export default function DateTimeWheelPicker({ value, onChange, className = '' }:
                 {formatDateTime(value)}
             </button>
 
-            {isOpen && (
-                <div className="datetime-picker-backdrop" onClick={() => setIsOpen(false)}>
-                    <div className="datetime-picker" onClick={(event) => event.stopPropagation()}>
+            {isOpen && createPortal(
+                <div className="datetime-picker-backdrop" onClick={(e) => {e.stopPropagation();setIsOpen(false);}}>
+                    <div className="datetime-picker" role="dialog" aria-modal="true" aria-label="ตั้งวันที่และเวลา" onClick={(event) => event.stopPropagation()}>
                         <div className="datetime-picker-header">
                             <h3>ตั้งวันที่และเวลา</h3>
                         </div>
@@ -149,10 +86,10 @@ export default function DateTimeWheelPicker({ value, onChange, className = '' }:
                         </div>
                         <div className="datetime-picker-actions">
                             <button className="btn btn-secondary" onClick={() => setIsOpen(false)}>ยกเลิก</button>
-                            <button className="btn btn-primary" onClick={() => { onChange(draft.toISOString()); setIsOpen(false); }}>ตั้งค่า</button>
+                            <button className="btn btn-primary" onClick={() => { window.dispatchEvent(new Event('timestamp-wheel-flush')); onChange(draftRef.current.toISOString()); setIsOpen(false); }}>ตั้งค่า</button>
                         </div>
                     </div>
-                </div>
+                </div>, document.body
             )}
         </>
     );

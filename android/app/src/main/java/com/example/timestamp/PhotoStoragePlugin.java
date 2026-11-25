@@ -59,6 +59,13 @@ public class PhotoStoragePlugin extends Plugin {
             }
 
             @Override
+            public void onOpen(SQLiteDatabase db) {
+                super.onOpen(db);
+                // Derived cache only. No schema changes to the original photo records.
+                db.execSQL("CREATE TABLE IF NOT EXISTS photo_thumbnails (photo_id TEXT PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE, data BLOB NOT NULL)");
+            }
+
+            @Override
             public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
                 throw new IllegalStateException("Photo storage requires a non-destructive migration");
             }
@@ -75,7 +82,7 @@ public class PhotoStoragePlugin extends Plugin {
                 try {
                     result = perform(db, call);
                     String operation = call.getString("operation", "");
-                    if (!operation.equals("read") && !operation.equals("list") && !operation.equals("status")) {
+                    if (!operation.equals("read") && !operation.equals("summaries") && !operation.equals("list") && !operation.equals("status")) {
                         ContentValues event = new ContentValues();
                         event.put("occurred_at", System.currentTimeMillis());
                         event.put("operation", operation);
@@ -130,16 +137,27 @@ public class PhotoStoragePlugin extends Plugin {
                 result.put("ids", ids);
                 break;
             }
+            case "summaries": {
+                JSArray ids = call.getArray("ids");
+                if (ids == null || ids.length() > 32) throw new IllegalArgumentException("Invalid summary batch");
+                JSArray summaries = new JSArray();
+                for (int index = 0; index < ids.length(); index++) {
+                    String photoId = ids.getString(index);
+                    JSObject summary = new JSObject();
+                    summary.put("record", requireMetadata(db, photoId));
+                    byte[] thumb = thumbnail(db, photoId, null);
+                    if (thumb != null) summary.put("thumbnail", Base64.encodeToString(thumb, Base64.NO_WRAP));
+                    summaries.put(summary);
+                }
+                result.put("summaries", summaries);
+                break;
+            }
             case "read": {
                 JSONObject metadata = readMetadata(db, id);
                 if (metadata == null) break;
-                ByteArrayOutputStream image = new ByteArrayOutputStream();
-                try (Cursor cursor = db.rawQuery("SELECT data FROM image_chunks WHERE photo_id=? ORDER BY sequence", new String[]{id})) {
-                    while (cursor.moveToNext()) image.write(cursor.getBlob(0));
-                }
-                if (image.size() == 0) throw new IllegalStateException("Missing image bytes for " + id);
+                byte[] image = readImage(db, id);
                 result.put("record", metadata);
-                result.put("image", Base64.encodeToString(image.toByteArray(), Base64.NO_WRAP));
+                result.put("image", Base64.encodeToString(image, Base64.NO_WRAP));
                 try (Cursor cursor = db.rawQuery("SELECT mime FROM photos WHERE id=?", new String[]{id})) {
                     cursor.moveToFirst();
                     result.put("mime", cursor.getString(0));
@@ -172,6 +190,35 @@ public class PhotoStoragePlugin extends Plugin {
                     part.put("data", chunk);
                     db.insertOrThrow("image_chunks", null, part);
                 }
+                if (operation.equals("add")) {
+                    byte[] thumb = thumbnail(db, id, bytes);
+                    if (thumb != null) result.put("thumbnail", Base64.encodeToString(thumb, Base64.NO_WRAP));
+                }
+                break;
+            }
+            case "updateBatch": {
+                JSArray ids = call.getArray("ids");
+                JSObject updates = call.getObject("updates");
+                if (ids == null || ids.length() == 0 || updates == null || updates.length() == 0)
+                    throw new IllegalArgumentException("Missing batch metadata");
+                HashSet<String> allowed = new HashSet<>(java.util.Arrays.asList(
+                    "timeMode", "timeValueISO", "locationLatitude", "locationLongitude",
+                    "locationAddress", "locationDetails", "remark"));
+                Iterator<String> fields = updates.keys();
+                while (fields.hasNext()) if (!allowed.contains(fields.next()))
+                    throw new IllegalArgumentException("Invalid batch metadata field");
+                for (int index = 0; index < ids.length(); index++) {
+                    String photoId = ids.getString(index);
+                    JSONObject metadata = requireMetadata(db, photoId);
+                    if (metadata.has("deletedAtISO")) throw new IllegalArgumentException("Photo is in trash");
+                    Iterator<String> keys = updates.keys();
+                    while (keys.hasNext()) {
+                        String key = keys.next();
+                        metadata.put(key, updates.get(key));
+                    }
+                    writeMetadata(db, photoId, metadata);
+                }
+                // execute() commits or rolls back the entire batch.
                 break;
             }
             case "update": {
@@ -217,11 +264,12 @@ public class PhotoStoragePlugin extends Plugin {
                 JSArray ids = call.getArray("ids");
                 if (ids == null) throw new IllegalArgumentException("Missing photo IDs");
                 List<String> current = activeIds(db);
+                HashSet<String> currentSet = new HashSet<>(current);
                 HashSet<String> seen = new HashSet<>();
                 List<String> ordered = new ArrayList<>();
                 for (int index = 0; index < ids.length(); index++) {
                     String photoId = ids.getString(index);
-                    if (!current.contains(photoId) || !seen.add(photoId)) throw new IllegalArgumentException("Invalid photo order");
+                    if (!currentSet.contains(photoId) || !seen.add(photoId)) throw new IllegalArgumentException("Invalid photo order");
                     ordered.add(photoId);
                 }
                 // Preserve photos captured while an order save was in flight.
@@ -243,8 +291,54 @@ public class PhotoStoragePlugin extends Plugin {
         return result;
     }
 
+    private byte[] readImage(SQLiteDatabase db, String id) throws Exception {
+        ByteArrayOutputStream image = new ByteArrayOutputStream();
+        try (Cursor cursor = db.rawQuery("SELECT data FROM image_chunks WHERE photo_id=? ORDER BY sequence", new String[]{id})) {
+            while (cursor.moveToNext()) image.write(cursor.getBlob(0));
+        }
+        if (image.size() == 0) throw new IllegalStateException("Missing image bytes for " + id);
+        return image.toByteArray();
+    }
+
+    private byte[] thumbnail(SQLiteDatabase db, String id, byte[] original) {
+        try {
+            try (Cursor cursor = db.rawQuery("SELECT data FROM photo_thumbnails WHERE photo_id=?", new String[]{id})) {
+                if (cursor.moveToFirst()) return cursor.getBlob(0);
+            }
+            byte[] bytes = original != null ? original : readImage(db,id);
+            android.graphics.BitmapFactory.Options options = new android.graphics.BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);
+            if (options.outWidth <= 0 || options.outHeight <= 0) return null;
+            options.inJustDecodeBounds = false;
+            options.inSampleSize = 1;
+            while (Math.max(options.outWidth,options.outHeight) / options.inSampleSize > 512) options.inSampleSize *= 2;
+            android.graphics.Bitmap bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);
+            if (bitmap == null) return null;
+            android.graphics.Bitmap small = bitmap;
+            try {
+                float scale = Math.min(1f, 256f / Math.max(bitmap.getWidth(),bitmap.getHeight()));
+                if (scale < 1f) small = android.graphics.Bitmap.createScaledBitmap(bitmap, Math.max(1,Math.round(bitmap.getWidth()*scale)),Math.max(1,Math.round(bitmap.getHeight()*scale)),true);
+                ByteArrayOutputStream output = new ByteArrayOutputStream();
+                if (!small.compress(android.graphics.Bitmap.CompressFormat.JPEG,82,output)) return null;
+                byte[] data = output.toByteArray();
+                ContentValues values = new ContentValues();
+                values.put("photo_id",id);values.put("data",data);
+                db.insertWithOnConflict("photo_thumbnails",null,values,SQLiteDatabase.CONFLICT_REPLACE);
+                return data;
+            } finally {
+                if(small != bitmap) small.recycle();
+                bitmap.recycle();
+            }
+        } catch (Exception | OutOfMemoryError error) {
+            // A derived preview must never prevent access to or saving an original.
+            android.util.Log.w("TimestampPhotoStorage","Thumbnail unavailable: "+id,error);
+            return null;
+        }
+    }
+
     private List<String> activeIds(SQLiteDatabase db) throws Exception {
-        List<String> remaining = new ArrayList<>();
+        java.util.LinkedHashSet<String> remaining = new java.util.LinkedHashSet<>();
         try (Cursor cursor = db.rawQuery("SELECT id FROM photos WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC", null)) {
             while (cursor.moveToNext()) remaining.add(cursor.getString(0));
         }

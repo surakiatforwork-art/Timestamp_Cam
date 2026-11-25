@@ -1,5 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import type { PhotoRecord, TrashRecord } from '../types';
+import type { PhotoRecord, TrashRecord, LibraryRecord } from '../types';
 import * as legacy from './legacyDb';
 
 type StoredMetadata = Omit<PhotoRecord, 'baseBlob'> & { deletedAtISO?: string };
@@ -10,6 +10,8 @@ interface StorageResult {
     record?: StoredMetadata;
     image?: string;
     mime?: string;
+    thumbnail?: string;
+    summaries?: {record: StoredMetadata; thumbnail?: string}[];
 }
 interface PhotoStoragePlugin {
     execute(options: {
@@ -42,7 +44,7 @@ function toBase64(blob: Blob): Promise<string> {
 
 async function writePhoto(operation: 'add' | 'import', photo: PhotoRecord | TrashRecord) {
     const { baseBlob, ...record } = photo;
-    await storage.execute({ operation, record, image: await toBase64(baseBlob), mime: baseBlob.type || 'image/jpeg' });
+    return storage.execute({ operation, record, image: await toBase64(baseBlob), mime: baseBlob.type || 'image/jpeg' });
 }
 
 export function initializePhotoStorage(): Promise<void> {
@@ -103,29 +105,48 @@ async function readPhoto(id: string): Promise<PhotoRecord | TrashRecord | undefi
     return { ...result.record, baseBlob: new Blob([bytes], { type: result.mime }) };
 }
 
-async function readPhotos(ids: string[], onProgress?: LoadProgress, signal?: AbortSignal): Promise<Array<PhotoRecord | TrashRecord>> {
-    const photos: Array<PhotoRecord | TrashRecord> = [];
-    onProgress?.(0, ids.length);
-    for (const id of ids) {
+type LibraryTrash = LibraryRecord & {deletedAtISO:string};
+function decodeBlob(value:string, mime:string):Blob {
+    const binary=atob(value), bytes=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+    return new Blob([bytes],{type:mime});
+}
+async function readPhotos(ids:string[],onProgress?:LoadProgress,signal?:AbortSignal):Promise<LibraryRecord[]> {
+    const records:LibraryRecord[]=[];
+    onProgress?.(0,ids.length);
+    for(let i=0;i<ids.length;i+=16) {
         signal?.throwIfAborted();
-        const photo = await readPhoto(id);
-        if (!photo) throw new Error(`Photo disappeared while loading: ${id}`);
-        photos.push(photo);
-        onProgress?.(photos.length, ids.length);
-        // Give capture, gestures and progress rendering a turn between originals.
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        const batch=ids.slice(i,i+16);
+        const {summaries}=await storage.execute({operation:'summaries',ids:batch});
+        if(!summaries || summaries.length!==batch.length)throw new Error('Incomplete library metadata');
+        for(let j=0;j<summaries.length;j++){
+            const {record,thumbnail}=summaries[j];
+            if(record.id!==batch[j])throw new Error('Library order mismatch');
+            records.push({...record,thumbnailBlob:thumbnail?decodeBlob(thumbnail,'image/jpeg'):undefined});
+        }
+        onProgress?.(records.length,ids.length);
+        await new Promise(resolve=>setTimeout(resolve,0));
     }
-    return photos;
+    signal?.throwIfAborted();
+    return records;
 }
 
-export async function getAllPhotos(signal?: AbortSignal): Promise<PhotoRecord[]> {
+export async function getOriginalBlob(photo:LibraryRecord):Promise<Blob> {
+    if(photo.baseBlob)return photo.baseBlob;
+    if(!isAndroid)throw new Error('Missing original');
+    const record=await readPhoto(photo.id);
+    if(!record)throw new Error('Original no longer exists');
+    return record.baseBlob;
+}
+
+export async function getAllPhotos(signal?: AbortSignal): Promise<LibraryRecord[]> {
     await initializePhotoStorage();
     if (!isAndroid) return legacy.getAllPhotos();
     const { ids = [] } = await storage.execute({ operation: 'list' });
     return readPhotos(ids, undefined, signal);
 }
 
-export async function getAllTrash(onProgress?: LoadProgress, signal?: AbortSignal): Promise<TrashRecord[]> {
+export async function getAllTrash(onProgress?: LoadProgress, signal?: AbortSignal): Promise<LibraryTrash[]> {
     await initializeTrashStorage(onProgress);
     signal?.throwIfAborted();
     if (!isAndroid) {
@@ -143,13 +164,15 @@ export async function getAllTrash(onProgress?: LoadProgress, signal?: AbortSigna
         return records;
     }
     const { ids = [] } = await storage.execute({ operation: 'list', trash: true });
-    return await readPhotos(ids, onProgress, signal) as TrashRecord[];
+    return await readPhotos(ids, onProgress, signal) as LibraryTrash[];
 }
 
-export async function addPhoto(photo: PhotoRecord): Promise<void> {
+export async function addPhoto(photo: PhotoRecord): Promise<LibraryRecord> {
     await initializePhotoStorage();
-    if (!isAndroid) return legacy.addPhoto(photo);
-    await writePhoto('add', photo);
+    if (!isAndroid) {await legacy.addPhoto(photo);return photo;}
+    const result=await writePhoto('add',photo);
+    const {baseBlob,...record}=photo;
+    return {...record,thumbnailBlob:result.thumbnail?decodeBlob(result.thumbnail,'image/jpeg'):undefined};
 }
 
 export async function updatePhoto(id: string, updates: Partial<PhotoRecord>): Promise<void> {
@@ -157,6 +180,24 @@ export async function updatePhoto(id: string, updates: Partial<PhotoRecord>): Pr
     if (!isAndroid) return legacy.updatePhoto(id, updates);
     if (updates.baseBlob !== undefined) throw new Error('Replacing original image bytes is not supported');
     await storage.execute({ operation: 'update', id, updates });
+}
+
+// Apply one metadata patch to all active images in a single transaction.
+export async function updatePhotos(ids: string[], updates: Partial<PhotoRecord>): Promise<void> {
+    await initializePhotoStorage();
+    const allowed = new Set(['timeMode','timeValueISO','locationLatitude','locationLongitude','locationAddress','locationDetails','remark']);
+    const keys = Object.keys(updates);
+    const unique = [...new Set(ids)];
+    if (!unique.length || !keys.length || keys.some(key => !allowed.has(key))) throw new Error('Invalid batch metadata');
+    if (isAndroid) {
+        await storage.execute({operation:'updateBatch', ids:unique, updates});
+        return;
+    }
+    await legacy.db.transaction('rw', legacy.db.photos, async () => {
+        for (const id of unique) {
+            if (await legacy.db.photos.update(id,updates) !== 1) throw new Error('Photo missing: '+id);
+        }
+    });
 }
 
 export async function getPhoto(id: string): Promise<PhotoRecord | undefined> {
@@ -174,15 +215,35 @@ export async function movePhotoToTrash(id: string): Promise<TrashRecord | undefi
     return await readPhoto(id) as TrashRecord;
 }
 
-export async function moveAllPhotosToTrash(): Promise<TrashRecord[]> {
+export async function movePhotosToTrash(ids: string[], deletedAtISO: string): Promise<void> {
+    await initializePhotoStorage();
+    const unique = [...new Set(ids)];
+    if (!unique.length) return;
+    if (isAndroid) {
+        await storage.execute({operation:'trash', ids:unique, deletedAtISO});
+        return;
+    }
+    await legacy.db.transaction('rw', legacy.db.photos, legacy.db.trash, legacy.db.metadata, async () => {
+        for (const id of unique) {
+            const record = await legacy.db.photos.get(id);
+            if (!record) throw new Error('Photo not found: '+id);
+            await legacy.db.trash.put({...record,deletedAtISO});
+            await legacy.db.photos.delete(id);
+        }
+        const order = await legacy.db.metadata.get('photo-order');
+        if (order) await legacy.db.metadata.put({...order,ids:order.ids.filter(id=>!unique.includes(id))});
+    });
+}
+
+export async function moveAllPhotosToTrash(): Promise<LibraryTrash[]> {
     await initializePhotoStorage();
     if (!isAndroid) return legacy.moveAllPhotosToTrash();
     const { ids = [] } = await storage.execute({ operation: 'list' });
     await storage.execute({ operation: 'trash', ids, deletedAtISO: new Date().toISOString() });
-    return await readPhotos(ids) as TrashRecord[];
+    return await readPhotos(ids) as LibraryTrash[];
 }
 
-export async function restoreTrashPhotos(ids: string[]): Promise<PhotoRecord[]> {
+export async function restoreTrashPhotos(ids: string[]): Promise<LibraryRecord[]> {
     await initializeTrashStorage();
     if (!isAndroid) return legacy.restoreTrashPhotos(ids);
     const { ids: available = [] } = await storage.execute({ operation: 'list', trash: true });

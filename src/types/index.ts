@@ -35,7 +35,8 @@ export interface PhotoRecord {
 }
 
 // Runtime photo with object URL
-export interface Photo extends PhotoRecord {
+export type LibraryRecord = Omit<PhotoRecord, "baseBlob"> & { baseBlob?: Blob; thumbnailBlob?: Blob };
+export interface Photo extends Omit<LibraryRecord, "thumbnailBlob"> {
     thumbUrl: string;
 }
 
@@ -44,8 +45,8 @@ export interface TrashRecord extends PhotoRecord {
     deletedAtISO: string;
 }
 
-export interface TrashPhoto extends TrashRecord {
-    thumbUrl: string;
+export interface TrashPhoto extends Photo {
+    deletedAtISO: string;
 }
 
 // Preset size option
@@ -110,6 +111,8 @@ export interface Settings {
     timeTextAlignment: OverlayTextAlignment;
     locationTextAlignment: OverlayTextAlignment;
 
+    autoTrashAfterDownload: boolean;
+
     // Log
     showLog: boolean;
 }
@@ -125,7 +128,7 @@ export interface ToastMessage {
 export type CameraStatus = 'off' | 'starting' | 'ready' | 'error' | 'denied';
 
 // Modal type
-export type ModalType = 'none' | 'preview' | 'settings' | 'map' | 'trash';
+export type ModalType = 'none' | 'preview' | 'settings' | 'map' | 'trash' | 'batch';
 
 // Download file type
 export type DownloadFormat = 'jpeg' | 'png';

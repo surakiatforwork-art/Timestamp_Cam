@@ -1,3 +1,5 @@
+import { useBackHandler } from '../../lib/backNavigation';
+import { Check, LoaderCircle, Map, MapPin, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { reverseGeocodeDetails } from '../../lib/geocoding';
@@ -121,15 +123,17 @@ export default function MapModal() {
     };
 
     const handleCancel = () => {
+        if(isLoading)return;
         dispatch({ type: 'SET_ACTIVE_MODAL', payload: previewPhoto ? 'preview' : 'settings' });
     };
 
+    useBackHandler(60,()=>{handleCancel();return true;});
     return (
         <div className="modal-backdrop map-modal" onClick={handleCancel}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h2>🗺️ เลือกตำแหน่งบนแผนที่</h2>
-                    <button className="icon-btn" onClick={handleCancel}>✕</button>
+                    <h2><Map className="ui-icon" aria-hidden="true" /> เลือกตำแหน่งบนแผนที่</h2>
+                    <button className="icon-btn" onClick={handleCancel}><X className="ui-icon" aria-hidden="true" /></button>
                 </div>
 
                 <div className="map-container" ref={mapContainerRef} />
@@ -137,7 +141,7 @@ export default function MapModal() {
                 <div className="modal-footer">
                     {selectedLat !== null && selectedLng !== null && (
                         <span style={{ flex: 1, fontSize: 12, color: 'var(--text-secondary)' }}>
-                            📍 {selectedLat.toFixed(6)}, {selectedLng.toFixed(6)}
+                            <MapPin className="ui-icon" aria-hidden="true" /> {selectedLat.toFixed(6)}, {selectedLng.toFixed(6)}
                         </span>
                     )}
                     <button className="btn btn-secondary" onClick={handleCancel}>
@@ -148,7 +152,7 @@ export default function MapModal() {
                         onClick={handleConfirm}
                         disabled={selectedLat === null || isLoading}
                     >
-                        {isLoading ? '⏳' : '✓'} ยืนยัน
+                        {isLoading ? <LoaderCircle className="ui-icon spinning" aria-hidden="true" /> : <Check className="ui-icon" aria-hidden="true" />} ยืนยัน
                     </button>
                 </div>
             </div>

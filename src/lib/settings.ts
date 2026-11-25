@@ -49,6 +49,7 @@ export const DEFAULT_SETTINGS: Settings = {
     locationFrame: { x: 0.5640195355197868, y: 0.06735555013020833, width: 0.4359804644802132, height: 0.42147104899088544 },
     timeTextAlignment: { horizontal: 'right', vertical: 'top' },
     locationTextAlignment: { horizontal: 'right', vertical: 'top' },
+    autoTrashAfterDownload: false,
     showLog: false,
 };
 

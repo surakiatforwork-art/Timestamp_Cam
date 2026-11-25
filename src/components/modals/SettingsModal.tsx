@@ -1,4 +1,8 @@
-import { useState, useEffect } from 'react';
+import AppUpdatePanel from '../common/AppUpdatePanel';
+import { useBackHandler } from '../../lib/backNavigation';
+import { confirmAction } from '../common/ConfirmDialog';
+import { ArrowDown, ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUp, ArrowUpLeft, ArrowUpRight, ChevronRight, CircleDot, Check, ClipboardList, Clock, Download, FileText, Frame, LoaderCircle, LocateFixed, Map, MapPin, NotebookPen, RefreshCw, Ruler, Search, Settings, Tag, Trash2, TriangleAlert, X } from 'lucide-react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { PRESET_SIZES, resetSettings } from '../../lib/settings';
 import { getCurrentPosition, reverseGeocodeDetails, forwardGeocode } from '../../lib/geocoding';
@@ -7,16 +11,16 @@ import type { OverlayFontFamily, OverlayTextAlignment, PresetSize, TimestampForm
 import DateTimeWheelPicker from '../common/DateTimeWheelPicker';
 import OverlayFrameEditor from '../common/OverlayFrameEditor';
 
-const ALIGNMENT_OPTIONS: Array<{ horizontal: OverlayTextAlignment['horizontal']; vertical: OverlayTextAlignment['vertical']; icon: string; label: string }> = [
-    { horizontal: 'left', vertical: 'top', icon: '↖', label: 'ซ้ายบน' },
-    { horizontal: 'center', vertical: 'top', icon: '↑', label: 'กลางบน' },
-    { horizontal: 'right', vertical: 'top', icon: '↗', label: 'ขวาบน' },
-    { horizontal: 'left', vertical: 'middle', icon: '←', label: 'ซ้ายกลาง' },
-    { horizontal: 'center', vertical: 'middle', icon: '•', label: 'กึ่งกลาง' },
-    { horizontal: 'right', vertical: 'middle', icon: '→', label: 'ขวากลาง' },
-    { horizontal: 'left', vertical: 'bottom', icon: '↙', label: 'ซ้ายล่าง' },
-    { horizontal: 'center', vertical: 'bottom', icon: '↓', label: 'กลางล่าง' },
-    { horizontal: 'right', vertical: 'bottom', icon: '↘', label: 'ขวาล่าง' },
+const ALIGNMENT_OPTIONS: Array<{ horizontal: OverlayTextAlignment['horizontal']; vertical: OverlayTextAlignment['vertical']; icon: typeof ArrowUp; label: string }> = [
+    { horizontal: 'left', vertical: 'top', icon: ArrowUpLeft, label: 'ซ้ายบน' },
+    { horizontal: 'center', vertical: 'top', icon: ArrowUp, label: 'กลางบน' },
+    { horizontal: 'right', vertical: 'top', icon: ArrowUpRight, label: 'ขวาบน' },
+    { horizontal: 'left', vertical: 'middle', icon: ArrowLeft, label: 'ซ้ายกลาง' },
+    { horizontal: 'center', vertical: 'middle', icon: CircleDot, label: 'กึ่งกลาง' },
+    { horizontal: 'right', vertical: 'middle', icon: ArrowRight, label: 'ขวากลาง' },
+    { horizontal: 'left', vertical: 'bottom', icon: ArrowDownLeft, label: 'ซ้ายล่าง' },
+    { horizontal: 'center', vertical: 'bottom', icon: ArrowDown, label: 'กลางล่าง' },
+    { horizontal: 'right', vertical: 'bottom', icon: ArrowDownRight, label: 'ขวาล่าง' },
 ];
 
 function AlignmentPicker({ value, onChange }: { value: OverlayTextAlignment; onChange: (value: OverlayTextAlignment) => void }) {
@@ -33,7 +37,7 @@ function AlignmentPicker({ value, onChange }: { value: OverlayTextAlignment; onC
                         aria-label={option.label}
                         onClick={() => onChange({ horizontal: option.horizontal, vertical: option.vertical })}
                     >
-                        {option.icon}
+                        <option.icon className="ui-icon" aria-hidden="true" />
                     </button>
                 );
             })}
@@ -41,22 +45,43 @@ function AlignmentPicker({ value, onChange }: { value: OverlayTextAlignment; onC
     );
 }
 
+type SettingsPage = 'time' | 'location' | 'remark' | 'download' | 'output' | 'overlay' | 'system';
+let returnFromMap = false;
+
 export default function SettingsModal() {
     const { state, dispatch, closeModal, deleteAllPhotos, showToast } = useApp();
     const { settings, photos } = state;
 
+    const [page,setPage]=useState<SettingsPage|null>(()=>returnFromMap?'location':null);
+    const bodyRef=useRef<HTMLDivElement>(null);
+    const rootScroll=useRef(0);
+    useLayoutEffect(()=>{returnFromMap=false;},[]);
+    useLayoutEffect(()=>{
+        if(bodyRef.current)bodyRef.current.scrollTop=page?0:rootScroll.current;
+    },[page]);
+    const openPage=(next:SettingsPage)=>{
+        rootScroll.current=bodyRef.current?.scrollTop??0;
+        setPage(next);
+    };
     const [logs, setLogs] = useState<string[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [locStatus, setLocStatus] = useState('');
     const [isLoadingGPS, setIsLoadingGPS] = useState(false);
     const [isSearching, setIsSearching] = useState(false);
+    const [deleting,setDeleting]=useState(false);
+    const [updateBusy,setUpdateBusy]=useState(false);
+    const close=()=>{if(!isLoadingGPS && !isSearching && !deleting && !updateBusy)closeModal();};
+    const busy=isLoadingGPS || isSearching || deleting || updateBusy;
+    const back=()=>{if(busy)return;if(page)setPage(null);else close();};
+    useBackHandler(60,()=>{back();return true;});
 
     // Subscribe to logs
     useEffect(() => {
+        if(page!=='system' || !settings.showLog)return;
         setLogs(getLogs());
         const unsubscribe = subscribeToLogs(setLogs);
         return unsubscribe;
-    }, []);
+    }, [page,settings.showLog]);
 
     const needsLocationDetails = settings.showAddress || settings.showSubdistrict || settings.showDistrict || settings.showProvince;
 
@@ -81,6 +106,7 @@ export default function SettingsModal() {
     };
 
     const handleGetGPS = async () => {
+        if (isLoadingGPS || isSearching) return;
         setIsLoadingGPS(true);
         setLocStatus('กำลังหาตำแหน่ง GPS...');
         try {
@@ -105,7 +131,7 @@ export default function SettingsModal() {
     };
 
     const handleSearch = async () => {
-        if (!searchQuery.trim()) return;
+        if (!searchQuery.trim() || isSearching || isLoadingGPS) return;
         setIsSearching(true);
         setLocStatus('กำลังค้นหา...');
         try {
@@ -133,11 +159,13 @@ export default function SettingsModal() {
     };
 
     const handleOpenMap = () => {
+        if(busy)return;
+        returnFromMap=true;
         dispatch({ type: 'SET_ACTIVE_MODAL', payload: 'map' });
     };
 
-    const handleResetSettings = () => {
-        if (!confirm('รีเซ็ตการตั้งค่าทั้งหมด?')) return;
+    const handleResetSettings = async () => {
+        if (!await confirmAction({title:'รีเซ็ตการตั้งค่าทั้งหมด?',message:'คืนค่าการตั้งค่าของแอปเป็นค่าเริ่มต้น โดยไม่ลบภาพในคลัง',action:'รีเซ็ต',kind:'warning'})) return;
         resetSettings();
         dispatch({ type: 'RESET_SETTINGS' });
         showToast('รีเซ็ตการตั้งค่าแล้ว', 'info');
@@ -145,9 +173,11 @@ export default function SettingsModal() {
 
     const handleDeleteAllPhotos = async () => {
         if (photos.length === 0) return;
-        if (!confirm(`ลบรูปทั้งหมด ${photos.length} รูป?`)) return;
-        await deleteAllPhotos();
-        showToast('ลบรูปทั้งหมดแล้ว', 'info');
+        if (!await confirmAction({title:`ย้ายรูปทั้งหมด ${photos.length} รูป?`,message:'ภาพจะถูกย้ายไปยังถังขยะ สามารถกู้คืนได้',action:'ย้ายไปถังขยะ',kind:'trash'})) return;
+        setDeleting(true);
+        try {await deleteAllPhotos();showToast('ลบรูปทั้งหมดแล้ว','info');}
+        catch {showToast('ย้ายรูปไปถังขยะไม่สำเร็จ','error');}
+        finally {setDeleting(false);}
     };
 
     const handleCopyLogs = async () => {
@@ -173,21 +203,51 @@ export default function SettingsModal() {
         });
     };
 
+    const categories = [
+        {id:'time',title:'เวลาและ Timestamp',icon:Clock,description:'เวลาถ่ายภาพ · รูปแบบวันที่',value:settings.globalTimeMode==='now'?'เวลาปัจจุบัน':'กำหนดเอง'},
+        {id:'location',title:'ตำแหน่ง',icon:MapPin,description:'GPS · แผนที่ · รายละเอียดที่อยู่',value:settings.locationEnabled?'เปิด':'ปิด'},
+        {id:'remark',title:'Remark',icon:NotebookPen,description:'ข้อความบนภาพ · ข้อความเริ่มต้น',value:settings.showRemark?'เปิด':'ปิด'},
+        {id:'download',title:'ดาวน์โหลด',icon:Download,description:'จัดการภาพหลังบันทึกไฟล์',value:settings.autoTrashAfterDownload?'ลบอัตโนมัติ':'เก็บภาพไว้'},
+        {id:'output',title:'ขนาดและสัดส่วนภาพ',icon:Ruler,description:'Original · Preset · Fit Mode',value:settings.outputMode==='original'?'ขนาดเดิม':settings.presetSize.w+' × '+settings.presetSize.h},
+        {id:'overlay',title:'ตัวอักษรและการจัดวาง',icon:Frame,description:'ฟอนต์ · ขอบ · กรอบข้อความ',value:''},
+        {id:'system',title:'จัดการแอป',icon:Settings,description:'อัปเดต · Log · จัดการคลังภาพ',value:''},
+    ] as const;
+    const activeCategory=categories.find(item=>item.id===page);
+    const renderCategory=(item:typeof categories[number])=>(
+        <button type="button" key={item.id} className="settings-category" onClick={()=>openPage(item.id)} aria-label={item.title}>
+            <span className="settings-category-icon"><item.icon aria-hidden="true"/></span>
+            <span className="settings-category-copy"><strong>{item.title}</strong><small>{item.description}</small></span>
+            {item.value && <span className="settings-category-value">{item.value}</span>}
+            <ChevronRight className="settings-chevron" aria-hidden="true"/>
+        </button>
+    );
     return (
-        <div className="modal-backdrop settings-modal" onClick={closeModal}>
-            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>⚙️ ตั้งค่า</h2>
-                    <button className="icon-btn" onClick={closeModal}>✕</button>
+        <div className="modal-backdrop settings-modal settings-redesign" onClick={close}>
+            <div className="modal-content" role="dialog" aria-modal="true" aria-label={activeCategory?.title??'ตั้งค่า'} onClick={(e) => e.stopPropagation()}>
+                <div className="modal-header settings-header">
+                    {page && <button className="icon-btn" aria-label="กลับหมวดการตั้งค่า" disabled={busy} onClick={back}><ArrowLeft className="ui-icon" aria-hidden="true"/></button>}
+                    <h2>{!page && <Settings className="ui-icon" aria-hidden="true"/>}{activeCategory?.title??'ตั้งค่า'}</h2>
+                    <button className="icon-btn" aria-label="ปิดการตั้งค่า" disabled={busy} onClick={close}><X className="ui-icon" aria-hidden="true" /></button>
                 </div>
-
-                <div className="modal-body">
+                <div ref={bodyRef} className="modal-body settings-body">
+                    {!page && <div className="settings-home" key="home">
+                        <div className="settings-intro"><strong>การตั้งค่าภาพถ่าย</strong><p>เลือกหมวดที่ต้องการปรับ ระบบบันทึกค่าให้อัตโนมัติ</p></div>
+                        <div className="settings-list-label">การถ่ายภาพและข้อมูล</div>
+                        <div className="settings-category-list">{categories.slice(0,4).map(renderCategory)}</div>
+                        <div className="settings-list-label">ลักษณะภาพ</div>
+                        <div className="settings-category-list">{categories.slice(4,6).map(renderCategory)}</div>
+                        <div className="settings-list-label">ระบบ</div>
+                        <div className="settings-category-list">{categories.slice(6).map(renderCategory)}</div>
+                        <p className="settings-version">Timestamp Cam · v1.5.3</p>
+                    </div>}
+                    {page && <div key={page} className="settings-detail">
                     {/* Time Section */}
-                    <div className="settings-section">
-                        <h3>🕐 เวลา (Global)</h3>
+                    {page==='time' && (
+                    <div id="settings-time" className="settings-section">
+                        <h3><Clock className="ui-icon" aria-hidden="true" /> เวลา (Global)</h3>
                         <div className="settings-row">
                             <label>ใช้เวลาปัจจุบัน</label>
-                            <button
+                            <button role="switch" aria-label="ใช้เวลาปัจจุบัน" aria-checked={settings.globalTimeMode === 'now'}
                                 className={`toggle ${settings.globalTimeMode === 'now' ? 'on' : ''}`}
                                 onClick={() => {
                                     dispatch({
@@ -196,7 +256,7 @@ export default function SettingsModal() {
                                     });
                                 }}
                             >
-                                <span className="toggle-knob">{settings.globalTimeMode === 'now' ? '✓' : '✕'}</span>
+                                <span className="toggle-knob">{settings.globalTimeMode === 'now' ? <Check className="ui-icon" aria-hidden="true" /> : <X className="ui-icon" aria-hidden="true" />}</span>
                             </button>
                         </div>
 
@@ -219,10 +279,12 @@ export default function SettingsModal() {
                                 : 'รูปใหม่จะใช้เวลาที่กำหนด'}
                         </p>
                     </div>
+                    )}
 
                     {/* Format Section */}
-                    <div className="settings-section">
-                        <h3>📝 รูปแบบ Timestamp</h3>
+                    {page==='time' && (
+                    <div id="settings-format" className="settings-section">
+                        <h3><FileText className="ui-icon" aria-hidden="true" /> รูปแบบ Timestamp</h3>
                         <div className="settings-row">
                             <label>รูปแบบ</label>
                             <select
@@ -241,10 +303,12 @@ export default function SettingsModal() {
                         </div>
                         <p className="settings-note">แบบภาพตัวอย่างใช้เดือนย่อไทย ค.ศ. และพิกัด DMS เมื่อเปิดตำแหน่ง</p>
                     </div>
+                    )}
 
                     {/* Output Section */}
-                    <div className="settings-section">
-                        <h3>📐 Output & ขนาด</h3>
+                    {page==='output' && (
+                    <div id="settings-size" className="settings-section">
+                        <h3><Ruler className="ui-icon" aria-hidden="true" /> Output & ขนาด</h3>
                         <div className="settings-row">
                             <label>โหมด Output</label>
                             <select
@@ -315,10 +379,12 @@ export default function SettingsModal() {
                             </>
                         )}
                     </div>
+                    )}
 
                     {/* Overlay Section */}
-                    <div className="settings-section">
-                        <h3>🏷️ Overlay</h3>
+                    {page==='overlay' && (
+                    <div id="settings-overlay" className="settings-section">
+                        <h3><Tag className="ui-icon" aria-hidden="true" /> Overlay</h3>
                         <div className="settings-row">
                             <label>Padding (px)</label>
                             <input
@@ -459,11 +525,13 @@ export default function SettingsModal() {
                             </div>
                         )}
 
-                        <p className="settings-note">ค่าเริ่มต้นใช้ฟอนต์ Android UI, Medium, ขอบดำบางแบบภาพตัวอย่าง</p>
+                        <p className="settings-note">ปรับตัวอักษรและขอบดำตามภาพที่ต้องการ</p>
                     </div>
+                    )}
 
-                    <div className="settings-section">
-                        <h3>▣ กรอบวางข้อความ</h3>
+                    {page==='overlay' && (
+                    <div id="settings-frame" className="settings-section">
+                        <h3><Frame className="ui-icon" aria-hidden="true" /> กรอบวางข้อความ</h3>
                         <OverlayFrameEditor
                             timeFrame={settings.timeFrame}
                             locationFrame={settings.locationFrame}
@@ -491,16 +559,18 @@ export default function SettingsModal() {
                             />
                         </div>
                     </div>
+                    )}
 
-                    <div className="settings-section">
-                        <h3>🗒️ Remark</h3>
+                    {page==='remark' && (
+                    <div id="settings-remark" className="settings-section">
+                        <h3><NotebookPen className="ui-icon" aria-hidden="true" /> Remark</h3>
                         <div className="settings-row">
                             <label>แสดง Remark บนรูป</label>
-                            <button
+                            <button role="switch" aria-label="แสดง Remark บนรูป" aria-checked={settings.showRemark}
                                 className={`toggle ${settings.showRemark ? 'on' : ''}`}
                                 onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showRemark: !settings.showRemark } })}
                             >
-                                <span className="toggle-knob">{settings.showRemark ? '✓' : '✕'}</span>
+                                <span className="toggle-knob">{settings.showRemark ? <Check className="ui-icon" aria-hidden="true" /> : <X className="ui-icon" aria-hidden="true" />}</span>
                             </button>
                         </div>
                         <label className="settings-field-label" htmlFor="default-remark">Remark เริ่มต้นสำหรับรูปใหม่</label>
@@ -513,13 +583,15 @@ export default function SettingsModal() {
                         />
                         <p className="settings-note">แก้ Remark ของแต่ละรูปได้จาก popup ของการ์ดภาพ</p>
                     </div>
+                    )}
 
                     {/* Location Section */}
-                    <div className="settings-section">
-                        <h3>📍 ตำแหน่ง</h3>
+                    {page==='location' && (
+                    <div id="settings-location" className="settings-section">
+                        <h3><MapPin className="ui-icon" aria-hidden="true" /> ตำแหน่ง</h3>
                         <div className="settings-row">
                             <label>เปิดใช้งานตำแหน่ง</label>
-                            <button
+                            <button role="switch" aria-label="เปิดใช้งานตำแหน่ง" aria-checked={settings.locationEnabled}
                                 className={`toggle ${settings.locationEnabled ? 'on' : ''}`}
                                 onClick={() => {
                                     dispatch({
@@ -528,73 +600,23 @@ export default function SettingsModal() {
                                     });
                                 }}
                             >
-                                <span className="toggle-knob">{settings.locationEnabled ? '✓' : '✕'}</span>
+                                <span className="toggle-knob">{settings.locationEnabled ? <Check className="ui-icon" aria-hidden="true" /> : <X className="ui-icon" aria-hidden="true" />}</span>
                             </button>
                         </div>
 
                         {settings.locationEnabled && (
                             <>
-                                <div className="settings-row">
-                                    <label>แสดง Lat/Lng</label>
-                                    <button
-                                        className={`toggle ${settings.showLatLng ? 'on' : ''}`}
-                                        onClick={() => {
-                                            dispatch({
-                                                type: 'SET_SETTINGS',
-                                                payload: { showLatLng: !settings.showLatLng },
-                                            });
-                                        }}
-                                    >
-                                        <span className="toggle-knob">{settings.showLatLng ? '✓' : '✕'}</span>
-                                    </button>
-                                </div>
-
-                                <div className="settings-row">
-                                    <label>แสดงที่อยู่</label>
-                                    <button
-                                        className={`toggle ${settings.showAddress ? 'on' : ''}`}
-                                        onClick={() => {
-                                            dispatch({
-                                                type: 'SET_SETTINGS',
-                                                payload: { showAddress: !settings.showAddress },
-                                            });
-                                        }}
-                                    >
-                                        <span className="toggle-knob">{settings.showAddress ? '✓' : '✕'}</span>
-                                    </button>
-                                </div>
-
-                                <div className="settings-row">
-                                    <label>แสดงแขวง/ตำบล</label>
-                                    <button className={`toggle ${settings.showSubdistrict ? 'on' : ''}`} onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showSubdistrict: !settings.showSubdistrict } })}>
-                                        <span className="toggle-knob">{settings.showSubdistrict ? '✓' : '✕'}</span>
-                                    </button>
-                                </div>
-
-                                <div className="settings-row">
-                                    <label>แสดงเขต/อำเภอ</label>
-                                    <button className={`toggle ${settings.showDistrict ? 'on' : ''}`} onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showDistrict: !settings.showDistrict } })}>
-                                        <span className="toggle-knob">{settings.showDistrict ? '✓' : '✕'}</span>
-                                    </button>
-                                </div>
-
-                                <div className="settings-row">
-                                    <label>แสดงจังหวัด</label>
-                                    <button className={`toggle ${settings.showProvince ? 'on' : ''}`} onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showProvince: !settings.showProvince } })}>
-                                        <span className="toggle-knob">{settings.showProvince ? '✓' : '✕'}</span>
-                                    </button>
-                                </div>
-
+                                <div className="settings-subheading">แหล่งตำแหน่ง</div>
                                 <div className="settings-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
                                     <button
                                         className="btn btn-sm btn-secondary"
                                         onClick={handleGetGPS}
-                                        disabled={isLoadingGPS}
+                                        disabled={busy}
                                     >
-                                        {isLoadingGPS ? '⏳' : '📡'} GPS ปัจจุบัน
+                                        {isLoadingGPS ? <LoaderCircle className="ui-icon spinning" aria-hidden="true" /> : <LocateFixed className="ui-icon" aria-hidden="true" />} GPS ปัจจุบัน
                                     </button>
-                                    <button className="btn btn-sm btn-secondary" onClick={handleOpenMap}>
-                                        🗺️ เลือกบนแผนที่
+                                    <button className="btn btn-sm btn-secondary" onClick={handleOpenMap} disabled={busy}>
+                                        <Map className="ui-icon" aria-hidden="true" /> เลือกบนแผนที่
                                     </button>
                                 </div>
 
@@ -644,28 +666,97 @@ export default function SettingsModal() {
                                     <button
                                         className="btn btn-sm btn-primary"
                                         onClick={handleSearch}
-                                        disabled={isSearching}
+                                        disabled={busy || !searchQuery.trim()}
                                     >
-                                        {isSearching ? '⏳' : '🔍'}
+                                        {isSearching ? <LoaderCircle className="ui-icon spinning" aria-hidden="true" /> : <Search className="ui-icon" aria-hidden="true" />}
                                     </button>
                                 </div>
 
                                 {locStatus && <p className="settings-note">{locStatus}</p>}
                                 {settings.cachedAddress && (
                                     <p className="settings-note" style={{ color: 'var(--accent)' }}>
-                                        📍 {settings.cachedAddress}
+                                        <MapPin className="ui-icon" aria-hidden="true" /> {settings.cachedAddress}
                                     </p>
                                 )}
+                                <div className="settings-subheading">ข้อมูลที่แสดงบนภาพ</div>
+                                <div className="settings-row">
+                                    <label>แสดง Lat/Lng</label>
+                                    <button role="switch" aria-label="แสดง Lat/Lng" aria-checked={settings.showLatLng}
+                                        className={`toggle ${settings.showLatLng ? 'on' : ''}`}
+                                        onClick={() => {
+                                            dispatch({
+                                                type: 'SET_SETTINGS',
+                                                payload: { showLatLng: !settings.showLatLng },
+                                            });
+                                        }}
+                                    >
+                                        <span className="toggle-knob">{settings.showLatLng ? <Check className="ui-icon" aria-hidden="true" /> : <X className="ui-icon" aria-hidden="true" />}</span>
+                                    </button>
+                                </div>
+
+                                <div className="settings-row">
+                                    <label>แสดงที่อยู่</label>
+                                    <button role="switch" aria-label="แสดงที่อยู่" aria-checked={settings.showAddress}
+                                        className={`toggle ${settings.showAddress ? 'on' : ''}`}
+                                        onClick={() => {
+                                            dispatch({
+                                                type: 'SET_SETTINGS',
+                                                payload: { showAddress: !settings.showAddress },
+                                            });
+                                        }}
+                                    >
+                                        <span className="toggle-knob">{settings.showAddress ? <Check className="ui-icon" aria-hidden="true" /> : <X className="ui-icon" aria-hidden="true" />}</span>
+                                    </button>
+                                </div>
+
+                                <div className="settings-row">
+                                    <label>แสดงแขวง/ตำบล</label>
+                                    <button role="switch" aria-label="แสดงแขวง/ตำบล" aria-checked={settings.showSubdistrict} className={`toggle ${settings.showSubdistrict ? 'on' : ''}`} onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showSubdistrict: !settings.showSubdistrict } })}>
+                                        <span className="toggle-knob">{settings.showSubdistrict ? <Check className="ui-icon" aria-hidden="true" /> : <X className="ui-icon" aria-hidden="true" />}</span>
+                                    </button>
+                                </div>
+
+                                <div className="settings-row">
+                                    <label>แสดงเขต/อำเภอ</label>
+                                    <button role="switch" aria-label="แสดงเขต/อำเภอ" aria-checked={settings.showDistrict} className={`toggle ${settings.showDistrict ? 'on' : ''}`} onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showDistrict: !settings.showDistrict } })}>
+                                        <span className="toggle-knob">{settings.showDistrict ? <Check className="ui-icon" aria-hidden="true" /> : <X className="ui-icon" aria-hidden="true" />}</span>
+                                    </button>
+                                </div>
+
+                                <div className="settings-row">
+                                    <label>แสดงจังหวัด</label>
+                                    <button role="switch" aria-label="แสดงจังหวัด" aria-checked={settings.showProvince} className={`toggle ${settings.showProvince ? 'on' : ''}`} onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { showProvince: !settings.showProvince } })}>
+                                        <span className="toggle-knob">{settings.showProvince ? <Check className="ui-icon" aria-hidden="true" /> : <X className="ui-icon" aria-hidden="true" />}</span>
+                                    </button>
+                                </div>
                             </>
                         )}
                     </div>
+                    )}
 
+                    {page==='download' && (
+                    <div id="settings-download" className="settings-section">
+                        <h3><Download className="ui-icon" aria-hidden="true" /> ดาวน์โหลด</h3>
+                        <div className="settings-row">
+                            <label htmlFor="auto-trash-download">ลบภาพอัตโนมัติหลังดาวน์โหลด</label>
+                            <button id="auto-trash-download" role="switch" aria-checked={settings.autoTrashAfterDownload}
+                                aria-label="ลบภาพอัตโนมัติหลังดาวน์โหลด" className={`toggle ${settings.autoTrashAfterDownload ? 'on' : ''}`}
+                                onClick={() => dispatch({type:'SET_SETTINGS',payload:{autoTrashAfterDownload:!settings.autoTrashAfterDownload}})}>
+                                <span className="toggle-knob">{settings.autoTrashAfterDownload ? <Check className="ui-icon" aria-hidden="true"/> : <X className="ui-icon" aria-hidden="true"/>}</span>
+                            </button>
+                        </div>
+                        <p className="settings-note">ย้ายเฉพาะภาพที่ยืนยันว่าบันทึกไฟล์สำเร็จไปยังถังขยะของแอป กู้คืนได้ตามปกติ</p>
+                    </div>
+                    )}
+
+                    {page==='system' && <AppUpdatePanel onBusy={setUpdateBusy}/>}
                     {/* Log Section */}
-                    <div className="settings-section">
-                        <h3>📋 Log</h3>
+                    {page==='system' && (
+                    <div id="settings-log" className="settings-section">
+                        <h3><ClipboardList className="ui-icon" aria-hidden="true" /> Log</h3>
                         <div className="settings-row">
                             <label>แสดง Log</label>
-                            <button
+                            <button role="switch" aria-label="แสดง Log" aria-checked={settings.showLog}
                                 className={`toggle ${settings.showLog ? 'on' : ''}`}
                                 onClick={() => {
                                     dispatch({
@@ -674,7 +765,7 @@ export default function SettingsModal() {
                                     });
                                 }}
                             >
-                                <span className="toggle-knob">{settings.showLog ? '✓' : '✕'}</span>
+                                <span className="toggle-knob">{settings.showLog ? <Check className="ui-icon" aria-hidden="true" /> : <X className="ui-icon" aria-hidden="true" />}</span>
                             </button>
                         </div>
 
@@ -682,10 +773,10 @@ export default function SettingsModal() {
                             <>
                                 <div className="settings-row">
                                     <button className="btn btn-sm btn-secondary" onClick={handleCopyLogs}>
-                                        📋 Copy Log
+                                        <ClipboardList className="ui-icon" aria-hidden="true" /> Copy Log
                                     </button>
                                     <button className="btn btn-sm btn-secondary" onClick={clearLogs}>
-                                        🗑️ Clear Log
+                                        <Trash2 className="ui-icon" aria-hidden="true" /> Clear Log
                                     </button>
                                 </div>
                                 <div className="log-panel">
@@ -694,24 +785,29 @@ export default function SettingsModal() {
                             </>
                         )}
                     </div>
+                    )}
 
                     {/* Danger Zone */}
-                    <div className="settings-section danger-zone">
-                        <h3>⚠️ Danger Zone</h3>
+                    {page==='system' && (
+                    <div id="settings-danger" className="settings-section danger-zone">
+                        <h3><TriangleAlert className="ui-icon" aria-hidden="true" /> Danger Zone</h3>
                         <div className="settings-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
                             <button className="btn btn-sm btn-outline" onClick={handleResetSettings}>
-                                🔄 Reset Settings
+                                <RefreshCw className="ui-icon" aria-hidden="true" /> Reset Settings
                             </button>
                             <button
                                 className="btn btn-sm btn-danger"
                                 onClick={handleDeleteAllPhotos}
-                                disabled={photos.length === 0}
+                                disabled={photos.length === 0 || deleting}
                             >
-                                🗑️ ลบรูปทั้งหมด ({photos.length})
+                                <Trash2 className="ui-icon" aria-hidden="true" /> ลบรูปทั้งหมด ({photos.length})
                             </button>
                         </div>
                     </div>
+                    )}
+                    </div>}
                 </div>
+                {page && <div className="settings-saved"><Check className="ui-icon" aria-hidden="true"/> บันทึกการตั้งค่าอัตโนมัติ</div>}
             </div>
         </div>
     );

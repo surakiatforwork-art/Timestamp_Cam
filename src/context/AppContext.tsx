@@ -1,9 +1,9 @@
 import { createContext, useContext, useReducer, useEffect, useState, type ReactNode, useCallback, useRef } from 'react';
-import type { Photo, Settings, ToastMessage, CameraStatus, ModalType, PhotoRecord, TrashPhoto } from '../types';
+import type { Photo, Settings, ToastMessage, CameraStatus, ModalType, PhotoRecord, TrashPhoto, LibraryRecord } from '../types';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS, resetSettings as resetSettingsStorage } from '../lib/settings';
 import {
-    getAllPhotos, addPhoto as addPhotoDB, updatePhoto as updatePhotoDB, getAllTrash,
-    movePhotoToTrash as movePhotoToTrashDB, moveAllPhotosToTrash as moveAllPhotosToTrashDB,
+    getAllPhotos, addPhoto as addPhotoDB, updatePhoto as updatePhotoDB, updatePhotos as updatePhotosDB, getAllTrash,
+    movePhotosToTrash as movePhotosToTrashDB,
     restoreTrashPhotos as restoreTrashPhotosDB, permanentlyDeleteTrashPhotos,
     reorderPhotos as reorderPhotosDB,
 } from '../lib/db';
@@ -33,6 +33,7 @@ interface AppState {
     // Modals
     activeModal: ModalType;
     previewPhotoId: string | null;
+    previewSequence: string[] | null;
 
     // Toast
     toasts: ToastMessage[];
@@ -61,6 +62,7 @@ type Action =
     | { type: 'SET_TRASH_PHOTOS'; payload: TrashPhoto[] }
     | { type: 'REMOVE_TRASH_PHOTOS'; payload: string[] }
     | { type: 'ADD_PHOTO'; payload: Photo }
+    | { type: 'UPDATE_PHOTOS'; payload: { ids: string[]; updates: Partial<PhotoRecord> } }
     | { type: 'UPDATE_PHOTO'; payload: { id: string; updates: Partial<Photo> } }
     | { type: 'DELETE_PHOTO'; payload: string }
     | { type: 'DELETE_ALL_PHOTOS' }
@@ -68,6 +70,7 @@ type Action =
     | { type: 'RESET_SETTINGS' }
     | { type: 'SET_ACTIVE_MODAL'; payload: ModalType }
     | { type: 'SET_PREVIEW_PHOTO_ID'; payload: string | null }
+    | { type: 'SET_PREVIEW_SEQUENCE'; payload: string[] | null }
     | { type: 'ADD_TOAST'; payload: ToastMessage }
     | { type: 'REMOVE_TOAST'; payload: string }
     | { type: 'SET_DOWNLOAD_PROGRESS'; payload: { current: number; total: number } | null }
@@ -89,6 +92,7 @@ const initialState: AppState = {
     settings: loadSettings(),
     activeModal: 'none',
     previewPhotoId: null,
+    previewSequence: null,
     toasts: [],
     downloadProgress: null,
     importProgress: null,
@@ -123,7 +127,7 @@ function appReducer(state: AppState, action: Action): AppState {
             return { ...state, photos: [...ordered, ...photos.values()] };
         }
         case 'DELETE_PHOTOS':
-            return { ...state, photos: state.photos.filter((photo) => !action.payload.includes(photo.id)) };
+            { const ids=new Set(action.payload);return {...state,photos:state.photos.filter(photo=>!ids.has(photo.id))}; }
         case 'SET_CAMERA_ON':
             return { ...state, cameraOn: action.payload };
         case 'SET_FACING_MODE':
@@ -144,6 +148,10 @@ function appReducer(state: AppState, action: Action): AppState {
             return { ...state, trashPhotos: state.trashPhotos.filter((photo) => !action.payload.includes(photo.id)) };
         case 'ADD_PHOTO':
             return { ...state, photos: [...state.photos, action.payload] };
+        case 'UPDATE_PHOTOS': {
+            const ids = new Set(action.payload.ids);
+            return { ...state, photos: state.photos.map(p => ids.has(p.id) ? {...p,...action.payload.updates} : p) };
+        }
         case 'UPDATE_PHOTO':
             return {
                 ...state,
@@ -168,6 +176,8 @@ function appReducer(state: AppState, action: Action): AppState {
             return { ...state, settings: { ...DEFAULT_SETTINGS } };
         case 'SET_ACTIVE_MODAL':
             return { ...state, activeModal: action.payload };
+        case 'SET_PREVIEW_SEQUENCE':
+            return { ...state, previewSequence: action.payload };
         case 'SET_PREVIEW_PHOTO_ID':
             return { ...state, previewPhotoId: action.payload };
         case 'ADD_TOAST':
@@ -189,14 +199,16 @@ interface AppContextType {
     dispatch: React.Dispatch<Action>;
     // Helper functions
     addPhoto: (record: PhotoRecord) => Promise<void>;
+    updatePhotos: (ids: string[], updates: Partial<PhotoRecord>) => Promise<void>;
     updatePhoto: (id: string, updates: Partial<PhotoRecord>) => Promise<void>;
+    trashPhotos: (ids:string[]) => Promise<number>;
     deletePhoto: (id: string) => Promise<void>;
     deleteAllPhotos: () => Promise<void>;
     restoreTrashPhotos: (ids: string[]) => Promise<number>;
     permanentlyDeleteTrashPhotos: (ids: string[]) => Promise<void>;
     clearTrash: () => Promise<void>;
     showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
-    openPreview: (photoId: string) => void;
+    openPreview: (photoId: string, sequence?: string[]) => void;
     closeModal: () => void;
     videoRef: React.RefObject<HTMLVideoElement>;
     retryPhotoStorage: () => void;
@@ -209,6 +221,14 @@ const AppContext = createContext<AppContextType | null>(null);
 export function AppProvider({ children }: { children: ReactNode }) {
     const [state, dispatch] = useReducer(appReducer, initialState);
     const objectUrlsRef = useRef<Map<string, string>>(new Map());
+    const runtimePhoto=useCallback(<T extends LibraryRecord>(record:T):Omit<T,'thumbnailBlob'> & {thumbUrl:string}=>{
+        const {thumbnailBlob,...metadata}=record;
+        const existing=objectUrlsRef.current.get(record.id);
+        const blob=thumbnailBlob??record.baseBlob;
+        const thumbUrl=existing??(blob?URL.createObjectURL(blob):'');
+        if(thumbUrl)objectUrlsRef.current.set(record.id,thumbUrl);
+        return {...metadata,thumbUrl};
+    },[]);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [storageAttempt, setStorageAttempt] = useState(0);
     const [trashAttempt, setTrashAttempt] = useState(0);
@@ -224,11 +244,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             try {
                 const records = await getAllPhotos(controller.signal);
                 if (controller.signal.aborted) return;
-                const photos: Photo[] = records.map((r) => {
-                    const thumbUrl = URL.createObjectURL(r.baseBlob);
-                    objectUrlsRef.current.set(r.id, thumbUrl);
-                    return { ...r, thumbUrl };
-                });
+                const photos:Photo[]=records.map(runtimePhoto);
                 dispatch({ type: 'SET_PHOTOS', payload: photos });
                 dispatch({ type: 'SET_STORAGE_STATUS', payload: 'ready' });
                 log(`Loaded ${photos.length} photos from storage`);
@@ -261,11 +277,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                     if (!controller.signal.aborted) dispatch({ type: 'SET_TRASH_PROGRESS', payload: { current, total, phase } });
                 }, controller.signal);
                 if (controller.signal.aborted) return;
-                const photos = records.map((record) => {
-                    const thumbUrl = objectUrlsRef.current.get(record.id) ?? URL.createObjectURL(record.baseBlob);
-                    objectUrlsRef.current.set(record.id, thumbUrl);
-                    return { ...record, thumbUrl };
-                });
+                const photos:TrashPhoto[]=records.map(runtimePhoto);
                 dispatch({ type: 'MERGE_TRASH_PHOTOS', payload: photos });
                 dispatch({ type: 'SET_TRASH_STATUS', payload: 'ready' });
                 log(`Loaded ${photos.length} trash originals in background`);
@@ -289,10 +301,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Add photo
     const addPhoto = useCallback(async (record: PhotoRecord) => {
         if (state.storageStatus !== 'ready') throw new Error('Photo storage is not ready');
-        await addPhotoDB(record);
-        const thumbUrl = URL.createObjectURL(record.baseBlob);
-        objectUrlsRef.current.set(record.id, thumbUrl);
-        dispatch({ type: 'ADD_PHOTO', payload: { ...record, thumbUrl } });
+        const saved=await addPhotoDB(record);
+        dispatch({type:'ADD_PHOTO',payload:runtimePhoto(saved)});
         log(`Photo added: ${record.id}`);
     }, [state.storageStatus]);
 
@@ -302,45 +312,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'UPDATE_PHOTO', payload: { id, updates } });
     }, []);
 
-    // Move photo to local trash rather than deleting it immediately.
-    const deletePhoto = useCallback(async (id: string) => {
-        const trashed = await movePhotoToTrashDB(id);
-        if (!trashed) return;
-        const existing = state.photos.find((photo) => photo.id === id);
-        dispatch({ type: 'DELETE_PHOTO', payload: id });
-        if (existing) {
-            dispatch({
-                type: 'MERGE_TRASH_PHOTOS',
-                payload: [{ ...trashed, thumbUrl: existing.thumbUrl }],
-            });
-        }
-        log(`Photo moved to trash: ${id}`);
-    }, [state.photos]);
+    const updatePhotos = useCallback(async (ids: string[], updates: Partial<PhotoRecord>) => {
+        await updatePhotosDB(ids, updates);
+        dispatch({type:'UPDATE_PHOTOS',payload:{ids,updates}});
+    }, []);
 
-    // Delete all photos
-    const deleteAllPhotos = useCallback(async () => {
-        const trashed = await moveAllPhotosToTrashDB();
-        const photoById = new Map(state.photos.map((photo) => [photo.id, photo]));
-        const trashPhotos = trashed.map((photo) => {
-            const thumbUrl = photoById.get(photo.id)?.thumbUrl ?? URL.createObjectURL(photo.baseBlob);
-            objectUrlsRef.current.set(photo.id, thumbUrl);
-            return { ...photo, thumbUrl };
-        });
-        dispatch({ type: 'DELETE_PHOTOS', payload: trashed.map((photo) => photo.id) });
-        dispatch({ type: 'MERGE_TRASH_PHOTOS', payload: trashPhotos });
-        log('All photos moved to trash');
-    }, [state.photos]);
+    const trashPhotos = useCallback(async (ids:string[]) => {
+        const wanted = new Set(ids);
+        const selected = state.photos.filter(p=>wanted.has(p.id));
+        if (!selected.length) return 0;
+        const deletedAtISO = new Date().toISOString();
+        await movePhotosToTrashDB(selected.map(p=>p.id),deletedAtISO);
+        dispatch({type:'DELETE_PHOTOS',payload:selected.map(p=>p.id)});
+        dispatch({type:'MERGE_TRASH_PHOTOS',payload:selected.map(p=>({...p,deletedAtISO}))});
+        return selected.length;
+    },[state.photos]);
+
+    const deletePhoto=useCallback(async(id:string)=>{await trashPhotos([id]);},[trashPhotos]);
+    const deleteAllPhotos=useCallback(async()=>{await trashPhotos(state.photos.map(p=>p.id));},[trashPhotos,state.photos]);
 
     const restoreTrashPhotos = useCallback(async (ids: string[]): Promise<number> => {
         if (state.trashStatus !== 'ready') throw new Error('Trash is still loading');
         const restored = await restoreTrashPhotosDB(ids);
         if (!restored.length) return 0;
-        const trashById = new Map(state.trashPhotos.map((photo) => [photo.id, photo]));
-        const restoredPhotos: Photo[] = restored.map((photo) => {
-            const thumbUrl = trashById.get(photo.id)?.thumbUrl ?? URL.createObjectURL(photo.baseBlob);
-            objectUrlsRef.current.set(photo.id, thumbUrl);
-            return { ...photo, thumbUrl };
-        });
+        const restoredPhotos:Photo[]=restored.map(runtimePhoto);
         dispatch({ type: 'RESTORE_PHOTOS', payload: restoredPhotos });
         return restoredPhotos.length;
     }, [state.trashStatus, state.trashPhotos]);
@@ -380,7 +375,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, []);
 
     // Open preview
-    const openPreview = useCallback((photoId: string) => {
+    const openPreview = useCallback((photoId: string, sequence?: string[]) => {
+        dispatch({ type: 'SET_PREVIEW_SEQUENCE', payload: sequence ?? null });
         dispatch({ type: 'SET_PREVIEW_PHOTO_ID', payload: photoId });
         dispatch({ type: 'SET_ACTIVE_MODAL', payload: 'preview' });
     }, []);
@@ -389,6 +385,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const closeModal = useCallback(() => {
         dispatch({ type: 'SET_ACTIVE_MODAL', payload: 'none' });
         dispatch({ type: 'SET_PREVIEW_PHOTO_ID', payload: null });
+        dispatch({ type: 'SET_PREVIEW_SEQUENCE', payload: null });
     }, []);
 
     return (
@@ -398,7 +395,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 dispatch,
                 addPhoto,
                 updatePhoto,
+                updatePhotos,
                 deletePhoto,
+                trashPhotos,
                 deleteAllPhotos,
                 restoreTrashPhotos,
                 permanentlyDeleteTrashPhotos: deleteTrashPhotos,

@@ -1,6 +1,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
 interface DeviceFeedbackPlugin {
+    setShutterEnabled(options: { enabled: boolean }): Promise<void>;
     vibrate(options: { duration: number }): Promise<void>;
 }
 
@@ -12,4 +13,11 @@ export function vibrateForCapture(): void {
         return;
     }
     navigator.vibrate?.(35);
+}
+
+export function vibrateForTick(): void {
+    if (Capacitor.isNativePlatform()) void DeviceFeedback.vibrate({ duration: 8 }).catch(() => {});
+}
+export function setHardwareShutter(enabled: boolean): void {
+    if (Capacitor.isNativePlatform()) void DeviceFeedback.setShutterEnabled({ enabled }).catch(() => {});
 }

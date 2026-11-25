@@ -1,3 +1,6 @@
+import { useBackHandler } from '../../lib/backNavigation';
+import { confirmAction } from '../common/ConfirmDialog';
+import { X } from 'lucide-react';
 import { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 
@@ -14,6 +17,8 @@ export default function TrashModal() {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const { trashPhotos } = state;
     const [busy, setBusy] = useState(false);
+    const close=()=>{if(!busy)closeModal();};
+    useBackHandler(60,()=>{close();return true;});
     const canEdit = state.trashStatus === 'ready' && !busy;
     const progress = state.trashProgress;
     const percent = progress.total ? Math.round(progress.current / progress.total * 100) : 0;
@@ -49,25 +54,25 @@ export default function TrashModal() {
     };
 
     const deleteSelected = async () => {
-        if (!selectedIds.size || !confirm(`ลบถาวร ${selectedIds.size} รูป?`)) return;
+        if (!selectedIds.size || !await confirmAction({title:`ลบถาวร ${selectedIds.size} รูป?`,message:'ภาพต้นฉบับในถังขยะจะถูกลบและไม่สามารถกู้คืนได้',action:'ลบถาวร',danger:true})) return;
         await permanentlyDeleteTrashPhotos([...selectedIds]);
         setSelectedIds(new Set());
         showToast('ลบรูปถาวรแล้ว', 'info');
     };
 
     const handleClearTrash = async () => {
-        if (!trashPhotos.length || !confirm(`ล้างถังขยะทั้งหมด ${trashPhotos.length} รูป?`)) return;
+        if (!trashPhotos.length || !await confirmAction({title:`ล้างถังขยะทั้งหมด ${trashPhotos.length} รูป?`,message:'ภาพทั้งหมดในถังขยะจะถูกลบถาวร ไม่สามารถกู้คืนได้',action:'ล้างถังขยะ',danger:true})) return;
         await clearTrash();
         setSelectedIds(new Set());
         showToast('ล้างถังขยะแล้ว', 'info');
     };
 
     return (
-        <div className="modal-backdrop trash-modal" onClick={closeModal}>
+        <div className="modal-backdrop trash-modal" onClick={close}>
             <div className="modal-content" onClick={(event) => event.stopPropagation()}>
                 <div className="modal-header">
                     <h2>ถังขยะ</h2>
-                    <button className="icon-btn" onClick={closeModal} title="ปิด">✕</button>
+                    <button className="icon-btn" onClick={close} title="ปิด"><X className="ui-icon" aria-hidden="true" /></button>
                 </div>
 
                 <div className="trash-toolbar">
@@ -108,7 +113,7 @@ export default function TrashModal() {
                                 onChange={() => toggle(photo.id)}
                                 disabled={!canEdit}
                             />
-                            <img src={photo.thumbUrl} alt="รูปที่ลบ" />
+                            <img src={photo.thumbUrl || undefined} loading="lazy" decoding="async" alt="รูปที่ลบ" />
                             <span className="trash-item-info">
                                 <strong>{photo.sourceName === 'camera' ? 'รูปจากกล้อง' : photo.sourceName}</strong>
                                 <small>ลบเมื่อ {new Date(photo.deletedAtISO).toLocaleString('th-TH')}</small>

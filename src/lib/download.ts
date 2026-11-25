@@ -59,14 +59,17 @@ export async function downloadOne(
     format: 'jpeg' | 'png',
     quality: number,
     index: number
-): Promise<void> {
+): Promise<{ confirmed: boolean }> {
     const blob = await renderPhotoToBlob(photo, settings, format, quality);
     const filename = generateFilename(index, format);
 
     if (Capacitor.isNativePlatform()) {
         await saveToNative(blob, filename);
+        return {confirmed:true};
     } else {
         downloadBlob(blob, filename);
+        // Browser anchor downloads cannot confirm that the file reached disk.
+        return {confirmed:false};
     }
 }
 
@@ -81,34 +84,28 @@ export async function downloadAll(
     format: 'jpeg' | 'png',
     quality: number,
     onProgress: (current: number, total: number) => void
-): Promise<{ method: string; success: boolean }> {
+): Promise<{ method: string; success: boolean; confirmedIds: string[] }> {
     const total = photos.length;
-    if (total === 0) return { method: 'none', success: false };
+    if (total === 0) return { method: 'none', success: false, confirmedIds: [] };
 
-    // Tier 1: Capacitor Filesystem (Native)
+    const confirmedIds: string[] = [];
+    const batchTime=new Date();
+    // Never return while a worker can still be writing to MediaStore.
     if (Capacitor.isNativePlatform()) {
-        try {
-            let nextIndex = 0;
-            let completed = 0;
-            const worker = async () => {
-                while (nextIndex < total) {
-                    const index = nextIndex++;
+        let nextIndex = 0, completed = 0;
+        const worker = async () => {
+            while (nextIndex < total) {
+                const index = nextIndex++;
+                try {
                     const blob = await renderPhotoToBlob(photos[index], settings, format, quality);
-                    await saveToNative(blob, generateFilename(index, format));
-                    completed++;
-                    onProgress(completed, total);
-                }
-            };
-            // Two jobs reduces total wait while keeping large canvas buffers bounded on mobile.
-            await Promise.all(Array.from({ length: Math.min(2, total) }, worker));
-            return { method: 'native-filesystem', success: true };
-        } catch (e) {
-            console.error('Native save failed:', e);
-            // Fallback to other methods if needed, but native usually expects execution to stop or alert
-            // But we can try zip if that fails? No, if native fails, web download also fails usually.
-            // Let's try to return false.
-            return { method: 'native-filesystem', success: false };
-        }
+                    await saveToNative(blob, generateFilename(index, format, batchTime));
+                    confirmedIds.push(photos[index].id);
+                } catch (e) { console.error('Native save failed:',e); }
+                finally { onProgress(++completed,total); }
+            }
+        };
+        await Promise.all(Array.from({length:Math.min(2,total)},worker));
+        return {method:'native-filesystem',success:confirmedIds.length===total,confirmedIds};
     }
 
     // Tier 2: File System Access API
@@ -120,19 +117,21 @@ export async function downloadAll(
 
             for (let i = 0; i < total; i++) {
                 const blob = await renderPhotoToBlob(photos[i], settings, format, quality);
-                const filename = generateFilename(i, format);
+                const filename = generateFilename(i, format,batchTime);
                 const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
                 const writable = await fileHandle.createWritable();
                 await writable.write(blob);
                 await writable.close();
+                confirmedIds.push(photos[i].id);
                 onProgress(i + 1, total);
             }
 
-            return { method: 'filesystem', success: true };
+            return { method: 'filesystem', success: true, confirmedIds };
         } catch (e) {
             if ((e as Error).name === 'AbortError') {
-                return { method: 'filesystem', success: false };
+                return { method: 'filesystem', success: false, confirmedIds };
             }
+            if (confirmedIds.length) return {method:'filesystem',success:false,confirmedIds};
             console.log('File System API failed, trying ZIP:', e);
             // Fall through to Tier 3
         }
@@ -145,7 +144,7 @@ export async function downloadAll(
 
         for (let i = 0; i < total; i++) {
             const blob = await renderPhotoToBlob(photos[i], settings, format, quality);
-            const filename = generateFilename(i, format);
+            const filename = generateFilename(i, format,batchTime);
             zip.file(filename, blob);
             onProgress(i + 1, total);
         }
@@ -163,7 +162,7 @@ export async function downloadAll(
             downloadBlob(zipBlob, zipName);
         }
 
-        return { method: 'zip', success: true };
+        return { method: 'zip', success: true, confirmedIds };
     } catch (e) {
         console.log('JSZip failed, trying sequential:', e);
         // Fall through to Tier 4
@@ -172,11 +171,11 @@ export async function downloadAll(
     // Tier 4: Sequential downloads
     for (let i = 0; i < total; i++) {
         const blob = await renderPhotoToBlob(photos[i], settings, format, quality);
-        const filename = generateFilename(i, format);
+        const filename = generateFilename(i, format,batchTime);
         downloadBlob(blob, filename);
         await delay(400);
         onProgress(i + 1, total);
     }
 
-    return { method: 'sequential', success: true };
+    return { method: 'sequential', success: true, confirmedIds };
 }

@@ -20,15 +20,18 @@ export function useCapture() {
     // Capture from camera
     const capturePhoto = useCallback(
         async (video: HTMLVideoElement) => {
-            if (captureInFlightRef.current) return;
+            if (captureInFlightRef.current || !video.videoWidth || !video.videoHeight || video.readyState < 2) return;
             captureInFlightRef.current = true;
             setIsCapturing(true);
             vibrateForCapture();
+            const capturedAt = new Date().toISOString();
+            const sourceRect = video.parentElement?.getBoundingClientRect() ?? video.getBoundingClientRect();
+            window.dispatchEvent(new Event('timestamp-capture-start'));
             const { width: vfWidth, height: vfHeight } = lastVfDimensions.current;
 
             // Fallback to video dimensions if viewfinder not set
-            const actualVfW = vfWidth || video.clientWidth;
-            const actualVfH = vfHeight || video.clientHeight;
+            const actualVfW = sourceRect.width || vfWidth || video.clientWidth;
+            const actualVfH = sourceRect.height || vfHeight || video.clientHeight;
 
             const isFrontCamera = state.facingMode === 'user';
 
@@ -37,11 +40,12 @@ export function useCapture() {
                     video,
                     actualVfW,
                     actualVfH,
-                    isFrontCamera
+                    isFrontCamera,
+                    Number(video.dataset.captureZoom ?? 1)
                 );
 
                 const baseBlob = await blob;
-                const now = new Date().toISOString();
+                const now = capturedAt;
 
                 const record: PhotoRecord = {
                     id: generateId(),
@@ -60,7 +64,7 @@ export function useCapture() {
                 };
 
                 await addPhoto(record);
-                // showToast('ถ่ายรูปแล้ว', 'success'); // Removed as per user request
+                window.dispatchEvent(new CustomEvent('timestamp-capture-saved', { detail: { id: record.id, rect: sourceRect } }));
             } catch (e) {
                 log(`Capture failed: ${e}`, 'error');
                 showToast('ถ่ายหรือบันทึกภาพไม่สำเร็จ กรุณาตรวจสอบพื้นที่ว่างในเครื่อง', 'error');
@@ -74,7 +78,7 @@ export function useCapture() {
 
     // Import from files
     const importPhotos = useCallback(
-        async (files: FileList | File[], ordered = false) => {
+        async (files: FileList | File[], _ordered = false) => {
             const fileArray = Array.from(files);
             log(`Importing ${fileArray.length} files`);
 
@@ -127,11 +131,11 @@ export function useCapture() {
                     await processFile(file);
                 }
             };
-            await Promise.all(Array.from({ length: Math.min(ordered ? 1 : 2, fileArray.length) }, worker));
+            await Promise.all(Array.from({ length: Math.min(1, fileArray.length) }, worker));
             dispatch({ type: 'SET_IMPORT_PROGRESS', payload: null });
 
             if (successCount > 0) {
-                showToast(`นำเข้า ${successCount} รูปแล้ว`, 'success');
+                showToast(successCount===fileArray.length?`นำเข้า ${successCount} รูปแล้ว`:`นำเข้า ${successCount}/${fileArray.length} รูป · บางรูปไม่สำเร็จ`,successCount===fileArray.length?'success':'info');
             } else {
                 showToast('นำเข้ารูปไม่สำเร็จ', 'error');
             }

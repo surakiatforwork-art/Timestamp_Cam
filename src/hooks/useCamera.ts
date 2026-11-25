@@ -3,8 +3,9 @@ import { useApp } from '../context/AppContext';
 import { log } from '../lib/logger';
 import { Camera } from '@capacitor/camera';
 
-export function useCamera() {
+export function useCamera(controller = false) {
     const { state, dispatch, showToast, videoRef } = useApp();
+    const generation = useRef(0);
     const streamRef = useRef<MediaStream | null>(null);
     const shouldRefreshOnResumeRef = useRef(false);
     const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -38,12 +39,14 @@ export function useCamera() {
     const startCamera = useCallback(async () => {
         if (!videoRef.current) return;
 
+        const request = ++generation.current;
         dispatch({ type: 'SET_CAMERA_STATUS', payload: 'starting' });
         log(`Starting camera: ${facingMode}`);
 
         try {
             // Request permission first via Capacitor
             const hasPermission = await requestCameraPermission();
+            if (request !== generation.current) return;
             if (!hasPermission) {
                 dispatch({ type: 'SET_CAMERA_STATUS', payload: 'denied' });
                 showToast('กรุณาอนุญาตการใช้กล้องในการตั้งค่า', 'error');
@@ -64,6 +67,7 @@ export function useCamera() {
                 audio: false,
             });
 
+            if (request !== generation.current || !videoRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
             streamRef.current = stream;
             videoRef.current.srcObject = stream;
             try {
@@ -77,6 +81,7 @@ export function useCamera() {
             }
 
             // Check for torch capability
+            if (request !== generation.current) return;
             const track = stream.getVideoTracks()[0];
             const capabilities = track.getCapabilities?.() as { torch?: boolean } | undefined;
             const hasTorch = capabilities?.torch === true;
@@ -84,12 +89,14 @@ export function useCamera() {
 
             // Check for multiple cameras
             const devices = await navigator.mediaDevices.enumerateDevices();
+            if (request !== generation.current) return;
             const videoInputs = devices.filter((d) => d.kind === 'videoinput');
             dispatch({ type: 'SET_HAS_MULTIPLE_CAMERAS', payload: videoInputs.length > 1 });
 
             dispatch({ type: 'SET_CAMERA_STATUS', payload: 'ready' });
             log('Camera ready');
         } catch (e) {
+            if (request !== generation.current) return;
             const err = e as Error;
             log(`Camera error: ${err.message}`, 'error');
 
@@ -105,6 +112,7 @@ export function useCamera() {
 
     // Stop camera
     const stopCamera = useCallback(() => {
+        generation.current++;
         if (streamRef.current) {
             streamRef.current.getTracks().forEach((t) => t.stop());
             streamRef.current = null;
@@ -119,6 +127,7 @@ export function useCamera() {
 
     // Toggle camera on/off
     useEffect(() => {
+        if (!controller) return;
         if (cameraOn) {
             startCamera();
         } else {
@@ -126,15 +135,17 @@ export function useCamera() {
         }
 
         return () => {
+            generation.current++;
             if (streamRef.current) {
                 streamRef.current.getTracks().forEach((t) => t.stop());
             }
         };
-    }, [cameraOn, startCamera, stopCamera]);
+    }, [cameraOn, startCamera, stopCamera, controller]);
 
     // Android can suspend a WebView's camera track while leaving its last frame on-screen.
     // Tear down that stale stream and reacquire it after the activity returns to foreground.
     useEffect(() => {
+        if (!controller) return;
         const markSuspended = () => {
             if (!cameraOn) return;
             shouldRefreshOnResumeRef.current = true;
@@ -165,7 +176,7 @@ export function useCamera() {
             window.removeEventListener('pageshow', refreshAfterResume);
             if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
         };
-    }, [cameraOn, startCamera, stopCamera]);
+    }, [cameraOn, startCamera, stopCamera, controller]);
 
     // Switch facing mode
     const switchCamera = useCallback(() => {
@@ -176,9 +187,9 @@ export function useCamera() {
 
     // Toggle torch
     const toggleTorch = useCallback(async () => {
-        if (!streamRef.current) return;
-
-        const track = streamRef.current.getVideoTracks()[0];
+        const stream = videoRef.current?.srcObject as MediaStream | null;
+        if (!stream) return;
+        const track = stream.getVideoTracks()[0];
         if (!track) return;
 
         const newTorchState = !torchOn;
@@ -193,7 +204,7 @@ export function useCamera() {
             log(`Torch toggle failed: ${e}`, 'error');
             showToast('ไม่สามารถเปิด/ปิดแฟลชได้', 'error');
         }
-    }, [torchOn, dispatch, showToast]);
+    }, [torchOn, dispatch, showToast, videoRef]);
 
     // Toggle camera on/off
     const toggleCameraOn = useCallback(() => {

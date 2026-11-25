@@ -1,3 +1,4 @@
+import { getOriginalBlob } from './db';
 import type { LocationDetails, OverlayFontFamily, OverlayFrame, OverlayTextAlignment, Photo, Settings, TimestampFormat } from '../types';
 import { formatDMS, formatTimestamp } from './format';
 
@@ -231,7 +232,7 @@ export async function renderPhotoToCanvas(
     maxPreviewSize?: number
 ): Promise<HTMLCanvasElement> {
     // Create image from blob
-    const img = await createImageBitmap(photo.baseBlob);
+    const img = await createImageBitmap(await getOriginalBlob(photo));
 
     let outputW: number, outputH: number;
 
@@ -325,6 +326,8 @@ export async function renderPhotoToCanvas(
         }
     }
 
+    img.close();
+
     // Build time and location text separately so each group honors its own frame.
     const overlay = buildOverlayGroups(
         photo.timeValueISO,
@@ -338,8 +341,8 @@ export async function renderPhotoToCanvas(
         settings.showRemark,
         photo.locationLatitude ?? settings.latitude,
         photo.locationLongitude ?? settings.longitude,
-        photo.locationAddress ?? settings.cachedAddress,
-        photo.locationDetails ?? settings.locationDetails,
+        photo.locationLatitude != null && photo.locationLongitude != null ? photo.locationAddress ?? null : settings.cachedAddress,
+        photo.locationLatitude != null && photo.locationLongitude != null ? photo.locationDetails ?? null : settings.locationDetails,
         photo.remark
     );
 
@@ -401,6 +404,7 @@ export async function renderPhotoToBlob(
     return new Promise((resolve, reject) => {
         canvas.toBlob(
             (blob) => {
+                canvas.width=0;canvas.height=0;
                 if (blob) resolve(blob);
                 else reject(new Error('Failed to create blob'));
             },
@@ -418,22 +422,23 @@ export async function processImportedImage(file: File): Promise<{
 }> {
     const img = await createImageBitmap(file);
 
+    const width=img.width,height=img.height;
     const canvas = document.createElement('canvas');
-    canvas.width = img.width;
-    canvas.height = img.height;
+    canvas.width = width;
+    canvas.height = height;
 
     const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(img, 0, 0);
+    try {ctx.drawImage(img,0,0);} finally {img.close();}
 
     const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
-            (b) => (b ? resolve(b) : reject(new Error('Failed to process image'))),
+            (b) => {canvas.width=0;canvas.height=0;b?resolve(b):reject(new Error('Failed to process image'));},
             'image/jpeg',
             0.92
         );
     });
 
-    return { blob, width: img.width, height: img.height };
+    return { blob, width, height };
 }
 
 // Capture frame from video
@@ -441,15 +446,20 @@ export function captureFromVideo(
     video: HTMLVideoElement,
     vfWidth: number,
     vfHeight: number,
-    isFrontCamera: boolean
+    isFrontCamera: boolean,
+    zoom = 1
 ): { blob: Promise<Blob>; width: number; height: number } {
     const videoW = video.videoWidth;
     const videoH = video.videoHeight;
 
     // Calculate crop to match viewfinder
-    const { sx, sy, sw, sh } = calculateCoverCrop(videoW, videoH, vfWidth, vfHeight);
+    if (!videoW || !videoH || !vfWidth || !vfHeight) throw new Error('Camera frame is not ready');
+    const crop = calculateCoverCrop(videoW, videoH, vfWidth, vfHeight);
+    const factor = Math.max(1, Math.min(3, Number.isFinite(zoom) ? zoom : 1));
+    const sw = crop.sw / factor, sh = crop.sh / factor;
+    const sx = crop.sx + (crop.sw - sw) / 2, sy = crop.sy + (crop.sh - sh) / 2;
 
-    // Output at video's natural resolution for that crop
+    // Digital zoom crops at natural resolution instead of inventing extra pixels.
     const outW = Math.round(sw);
     const outH = Math.round(sh);
 
@@ -468,7 +478,7 @@ export function captureFromVideo(
 
     const blobPromise = new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
-            (b) => (b ? resolve(b) : reject(new Error('Failed to capture'))),
+            (b) => { canvas.width = 0; canvas.height = 0; b ? resolve(b) : reject(new Error('Failed to capture')); },
             'image/jpeg',
             0.92
         );

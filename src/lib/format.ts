@@ -73,8 +73,7 @@ function formatDMSPart(value: number, axis: 'lat' | 'lng'): string {
 }
 
 // Generate filename for download
-export function generateFilename(index: number, format: 'jpeg' | 'png'): string {
-    const now = new Date();
+export function generateFilename(index: number, format: 'jpeg' | 'png', now = new Date()): string {
     const y = now.getFullYear();
     const mo = (now.getMonth() + 1).toString().padStart(2, '0');
     const d = now.getDate().toString().padStart(2, '0');
