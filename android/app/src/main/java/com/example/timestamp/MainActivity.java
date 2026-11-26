@@ -7,6 +7,9 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.Display;
+import android.view.WindowManager;
+import android.util.Log;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -127,6 +130,9 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
+        // A display-mode request, not a 120 FPS video/camera lock. WebView
+        // requestAnimationFrame and CSS transitions follow display vsync.
+        requestUpTo120Hz();
         // Wait until the activity and WebView are foregrounded before React reacquires MediaStream.
         if (getBridge() != null && getBridge().getWebView() != null) {
             getBridge().getWebView().postDelayed(
@@ -134,6 +140,39 @@ public class MainActivity extends BridgeActivity {
                 250
             );
         }
+    }
+
+    /**
+     * Ask Android for the highest compatible 60/90/120 Hz display mode.
+     * The system retains final control for battery saver, thermal and user
+     * preferences. Never request another resolution or a mode > 120 Hz.
+     * Not all camera streams support 120 fps; they remain untouched.
+     */
+    @SuppressWarnings("deprecation")
+    private void requestUpTo120Hz() {
+        final Display display = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+            ? getDisplay() : getWindowManager().getDefaultDisplay();
+        if (display == null) return;
+        final Display.Mode current = display.getMode();
+        Display.Mode best = null;
+        for (Display.Mode mode : display.getSupportedModes()) {
+            if (mode.getPhysicalWidth() != current.getPhysicalWidth() ||
+                mode.getPhysicalHeight() != current.getPhysicalHeight()) continue;
+            final float hz = mode.getRefreshRate();
+            if (hz > 120.5f || hz <= 60.5f) continue;
+            if (best == null || hz > best.getRefreshRate()) best = mode;
+        }
+        if (best == null) {
+            Log.d("TimestampRefresh", "No high-refresh mode; system default");
+            return;
+        }
+        final WindowManager.LayoutParams params = getWindow().getAttributes();
+        if (params.preferredDisplayModeId != best.getModeId()) {
+            params.preferredDisplayModeId = best.getModeId();
+            getWindow().setAttributes(params);
+        }
+        Log.d("TimestampRefresh", "Requested " + best.getRefreshRate() + " Hz (mode " +
+            best.getModeId() + "), actual timing is Android-controlled");
     }
 
     private void emitWebLifecycleEvent(String eventName) {
