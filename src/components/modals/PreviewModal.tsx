@@ -55,6 +55,15 @@ export default function PreviewModal() {
     const removalAnimations = useRef<Animation[]>([]);
     const removalTimer = useRef<ReturnType<typeof setTimeout>>();
     const removalOverlay = useRef<HTMLCanvasElement|null>(null);
+    const downloadFlight = useRef<{node:HTMLCanvasElement;animations:Animation[];finish:()=>void}|null>(null);
+    const downloadButtonRef=useRef<HTMLButtonElement>(null);
+    const downloadSaved=useRef(false);
+    const [savingMotion,setSavingMotion]=useState(false);
+    function clearDownloadFlight(){
+        const flight=downloadFlight.current;
+        if(flight){downloadFlight.current=null;flight.animations.forEach(a=>a.cancel());flight.finish();releaseSnapshot(flight.node);}
+        viewportRef.current?.removeAttribute('data-download-flight');
+    }
     const [removalTransition,setRemovalTransition] = useState(false);
     function clearRemovalVisuals() {
         clearTimeout(removalTimer.current);
@@ -123,6 +132,7 @@ export default function PreviewModal() {
         const pending=removal.current;
         if(!pending || pending.target!==photo?.id)return;
         removal.current=null;
+        clearDownloadFlight();
         clearRemovalVisuals();
         navigationPending.current=true;
         setTransitioning(true);setRemovalTransition(true);
@@ -160,6 +170,7 @@ export default function PreviewModal() {
     useEffect(() => () => {
         motionRef.current?.cancel(); motionRef.current = null; navigationPending.current = false;
         zoomMotion.current?.cancel(); dismissMotion.current?.cancel(); backdropMotion.current?.cancel();
+        clearDownloadFlight();
         clearRemovalVisuals();
         if(removal.current)releaseSnapshot(removal.current.outgoing);
         removal.current=null;
@@ -354,21 +365,81 @@ export default function PreviewModal() {
         if(!previous&&!next)dispatch({type:'SET_PREVIEW_SEQUENCE',payload:all.filter(id=>id!==photo!.id)});
         dispatch({type:'SET_PREVIEW_PHOTO_ID',payload:target});
     }
+    // Animate only a confirmed save, using a small copy of the visible stamped
+    // image. The original remains in storage until the flight has completed.
+    async function playDownloadFlight():Promise<boolean>{
+        const viewport=viewportRef.current,canvas=viewport?.querySelector<HTMLCanvasElement>('.active-preview-canvas');
+        const destination=downloadButtonRef.current;
+        if(reducedMotion()||document.hidden||!viewport||!canvas||!destination||!canvas.width||!canvas.height||getComputedStyle(canvas).visibility!=='visible')return false;
+        const frame=viewport.getBoundingClientRect(),r=canvas.getBoundingClientRect(),target=destination.getBoundingClientRect();
+        const x=Math.max(frame.left,r.left),y=Math.max(frame.top,r.top);
+        const w=Math.min(frame.right,r.right)-x,h=Math.min(frame.bottom,r.bottom)-y;
+        if(w<2||h<2||!target.width)return false;
+        const ghost=document.createElement('canvas');
+        ghost.width=Math.max(1,Math.round(w));ghost.height=Math.max(1,Math.round(h));
+        const ctx=ghost.getContext('2d');
+        if(!ctx||typeof ghost.animate!=='function'){releaseSnapshot(ghost);return false;}
+        try{ctx.drawImage(canvas,(x-r.left)*canvas.width/r.width,(y-r.top)*canvas.height/r.height,w*canvas.width/r.width,h*canvas.height/r.height,0,0,ghost.width,ghost.height);}
+        catch{releaseSnapshot(ghost);return false;}
+        ghost.className='preview-download-flight';ghost.setAttribute('aria-hidden','true');
+        Object.assign(ghost.style,{left:x+'px',top:y+'px',width:w+'px',height:h+'px'});
+        const dx=target.left+target.width/2-x-w/2,dy=target.top+target.height/2-y-h/2;
+        const scale=Math.min(.22,34/Math.max(w,h)),duration=580;
+        document.body.appendChild(ghost);
+        viewport.setAttribute('data-download-flight','active');
+        setSavingMotion(true);
+        await new Promise<void>(resolve=>{
+            let settled=false;
+            const finish=()=>{if(settled)return;settled=true;clearTimeout(timer);document.removeEventListener('visibilitychange',visibility);resolve();};
+            const visibility=()=>{if(document.hidden)finish();};
+            const timer=setTimeout(finish,duration+120);
+            document.addEventListener('visibilitychange',visibility);
+            const animations:Animation[]=[];
+            downloadFlight.current={node:ghost,animations,finish};
+            try{
+                const movement=ghost.animate([
+                    {transform:'translate3d(0,0,0) scale(1)'},
+                    {transform:`translate3d(${dx}px,${dy}px,0) scale(${scale})`}
+                ],{duration,easing:'cubic-bezier(.32,.12,.24,1)',fill:'forwards'});
+                animations.push(movement,ghost.animate([{opacity:1,offset:0},{opacity:1,offset:.72},{opacity:0,offset:1}],{duration,easing:'linear',fill:'forwards'}));
+                void movement.finished.then(finish,finish);
+            }catch{finish();}
+        });
+        const flight=downloadFlight.current;
+        if(flight){downloadFlight.current=null;flight.animations.forEach(a=>a.cancel());releaseSnapshot(flight.node);}
+        return true;
+    }
     const handleDownload = async () => {
         if (busy || actionLock.current || navigationPending.current || closing.current) return;
-        actionLock.current=true; setIsDownloading(true);
-        let outgoing:HTMLCanvasElement|null=null;
+        actionLock.current=true; setIsDownloading(true);downloadSaved.current=false;
+        let outgoing:HTMLCanvasElement|null=null, transitioned=false;
         try {
             if (state.settings.autoTrashAfterDownload && hasUnsavedRemark() &&
                 !await confirmAction({title:'Remark ยังไม่ได้บันทึก',message:'ดาวน์โหลดด้วยข้อมูลที่บันทึกไว้และย้ายภาพไปถังขยะหรือไม่?',action:'ดาวน์โหลด',kind:'warning'})) return;
             const index = state.photos.findIndex(p=>p.id===photo.id);
             const saved = await downloadOne(photo,state.settings,downloadFormat,jpegQuality,index);
-            if(saved.confirmed&&state.settings.autoTrashAfterDownload)outgoing=snapshotPreview();
+            downloadSaved.current=saved.confirmed;
+            const flew=saved.confirmed?await playDownloadFlight():false;
+            if(saved.confirmed&&state.settings.autoTrashAfterDownload&&!flew)outgoing=snapshotPreview();
             const moved = await finishDownload({success:true,confirmedIds:saved.confirmed?[photo.id]:[]},1,state.settings.autoTrashAfterDownload,trashPhotos,showToast);
-            if (moved) {afterRemoval(outgoing);outgoing=null;}
+            if (moved) {transitioned=true;afterRemoval(outgoing);outgoing=null;}
+            else if(flew){
+                // When auto-trash is off (or cleanup fails), return the same photo.
+                viewportRef.current?.removeAttribute('data-download-flight');
+                const track=trackRef.current;
+                if(track&&!document.hidden&&!reducedMotion()){
+                    const motion=track.animate([{opacity:0},{opacity:1}],{duration:180,easing:'ease-out'});
+                    await Promise.race([motion.finished.catch(()=>{}),new Promise(r=>setTimeout(r,220))]);
+                    motion.cancel();
+                }
+            }
         } catch(e) {
-            log(`Download failed: ${e}`,'error'); showToast('ดาวน์โหลดไม่สำเร็จ','error');
-        } finally {releaseSnapshot(outgoing);actionLock.current=false;setIsDownloading(false);}
+            log(`Download failed: ${e}`,'error'); showToast(downloadSaved.current?'บันทึกภาพแล้ว แต่การจัดการหลังดาวน์โหลดไม่สำเร็จ':'ดาวน์โหลดไม่สำเร็จ','error');
+        } finally {
+            releaseSnapshot(outgoing);
+            if(!transitioned)clearDownloadFlight();
+            setSavingMotion(false);downloadSaved.current=false;actionLock.current=false;setIsDownloading(false);
+        }
     };
     const handleDelete = async () => {
         if (busy || actionLock.current || navigationPending.current || closing.current) return;
@@ -750,11 +821,12 @@ export default function PreviewModal() {
 
                 <div className="preview-actions" style={{ pointerEvents: transitioning || busy ? 'none' : undefined }}>
                     <button
+                        ref={downloadButtonRef}
                         className="btn btn-primary"
                         onClick={handleDownload}
                         disabled={busy || transitioning}
                     >
-                        {isDownloading ? <><span className="loading-spinner" /> กำลังดาวน์โหลด...</> : <><Download className="ui-icon" aria-hidden="true" /> ดาวน์โหลด</>}
+                        {savingMotion ? <><Download className="ui-icon" aria-hidden="true" /> บันทึกภาพแล้ว</> : isDownloading ? <><span className="loading-spinner" /> กำลังดาวน์โหลด...</> : <><Download className="ui-icon" aria-hidden="true" /> ดาวน์โหลด</>}
                     </button>
                     <button className="btn btn-danger" disabled={busy || transitioning} onClick={handleDelete}>
                         <Trash2 className="ui-icon" aria-hidden="true" /> ลบรูปนี้

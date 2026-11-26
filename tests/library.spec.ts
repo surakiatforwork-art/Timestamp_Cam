@@ -960,3 +960,88 @@ test('reduced motion keeps the removal safety lock without visual animation',asy
     await expect(page.locator('.preview-removal-outgoing')).toHaveCount(0);
     await expect(page.getByRole('button',{name:'ลบรูปนี้'})).toBeEnabled();
 });
+
+async function mockConfirmedPreviewSave(page:Page,mode:'confirmed'|'failed'='confirmed'){
+    // Mock only the save boundary. Real library, trash, rendering and UI stay in use.
+    await page.route(url=>url.pathname==='/src/lib/download.ts'&&!url.searchParams.has('unmocked'),async route=>{
+        await route.fulfill({contentType:'application/javascript',body:`
+            export {downloadAll} from '/src/lib/download.ts?unmocked=1';
+            export async function downloadOne(){
+                window.__previewSaveCalls=(window.__previewSaveCalls||0)+1;
+                await new Promise(r=>setTimeout(r,120));
+                if('${mode}'==='failed')throw new Error('test disk failure');
+                return {confirmed:true};
+            }
+        `});
+    });
+}
+test('confirmed preview save flies down before replacement and protects against double taps',async({page})=>{
+    await mockConfirmedPreviewSave(page);
+    await seed(page,3);
+    await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('timestamp-settings')??'{}');localStorage.setItem('timestamp-settings',JSON.stringify({...s,autoTrashAfterDownload:true}));});
+    await page.reload();
+    await page.locator('[data-card-id="photo-1"]').click();
+    await expect(page.locator('.active-preview-canvas')).toBeVisible();
+    const button=page.locator('.preview-actions .btn-primary'),flight=page.locator('.preview-download-flight');
+    await button.click();
+    await expect(flight).toBeVisible();
+    await expect(page.locator('.preview-canvas-container')).toHaveAttribute('data-download-flight','active');
+    await expect(page.getByRole('heading',{name:'รูปที่ 2 / 3',exact:true})).toBeVisible();
+    await expect(page.locator('.thumbnail')).toHaveCount(3);
+    await expect(button).toBeDisabled();
+    const motion=await flight.evaluate(el=>el.getAnimations().map(a=>({frames:(a.effect as KeyframeEffect).getKeyframes(),duration:a.effect!.getTiming().duration})));
+    const path=motion.find(a=>a.frames[0].transform)!;
+    expect(path.duration).toBe(580);
+    const last=String(path.frames.at(-1)!.transform);
+    const match=last.match(/translate3d\([^,]+,\s*([\d.]+)px,\s*0(?:px)?\) scale\(([\d.]+)\)/);
+    expect(match).not.toBeNull();expect(Number(match![1])).toBeGreaterThan(0);expect(Number(match![2])).toBeLessThan(.25);
+    await button.evaluate(el=>(el as HTMLButtonElement).click());
+    expect(await page.evaluate(()=>(window as any).__previewSaveCalls)).toBe(1);
+    await expect(flight).toHaveCount(0);
+    await expect(page.locator('[data-card-id="photo-1"]')).toHaveCount(0);
+    await expect(page.getByRole('heading',{name:'รูปที่ 1 / 2',exact:true})).toBeVisible();
+    await expect(button).toBeEnabled();
+    await expect(page.locator('.preview-canvas-container')).not.toHaveAttribute('data-download-flight','active');
+    await expect(page.locator('.active-preview-canvas')).toBeVisible();
+    // Next fallback, then last photo closes only after the flight.
+    await button.click();await expect(flight).toBeVisible();
+    await expect(page.locator('.thumbnail')).toHaveCount(2);
+    await expect(page.getByRole('heading',{name:'รูปที่ 1 / 1',exact:true})).toBeVisible();
+    await expect(button).toBeEnabled();
+    await button.click();await expect(flight).toBeVisible();
+    await expect(page.locator('.preview-modal')).toBeVisible();
+    await expect(page.locator('.preview-modal')).toHaveCount(0);
+    await expect(page.locator('.thumbnail')).toHaveCount(0);
+    await expect(flight).toHaveCount(0);
+});
+test('confirmed preview save without auto trash returns to same image',async({page})=>{
+    await mockConfirmedPreviewSave(page);await seed(page,2);
+    await page.locator('.thumbnail').first().click();
+    await expect(page.locator('.active-preview-canvas')).toBeVisible();
+    const button=page.locator('.preview-actions .btn-primary');
+    await button.click();await expect(page.locator('.preview-download-flight')).toBeVisible();
+    await expect(button).toBeEnabled();
+    await expect(page.locator('.thumbnail')).toHaveCount(2);
+    await expect(page.getByRole('heading',{name:'รูปที่ 1 / 2',exact:true})).toBeVisible();
+    await expect(page.locator('.active-preview-canvas')).toBeVisible();
+});
+test('failed preview save never flies or removes the photo',async({page})=>{
+    await mockConfirmedPreviewSave(page,'failed');await seed(page,2);
+    await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('timestamp-settings')??'{}');localStorage.setItem('timestamp-settings',JSON.stringify({...s,autoTrashAfterDownload:true}));});
+    await page.reload();await page.locator('.thumbnail').first().click();
+    const button=page.locator('.preview-actions .btn-primary');
+    await button.click();await expect(page.getByText('ดาวน์โหลดไม่สำเร็จ',{exact:true})).toBeVisible();
+    await expect(button).toBeEnabled();
+    await expect(page.locator('.preview-download-flight')).toHaveCount(0);
+    await expect(page.locator('.thumbnail')).toHaveCount(2);
+});
+test('reduced motion confirmed preview save skips flight but still replaces photo',async({page})=>{
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await mockConfirmedPreviewSave(page);await seed(page,2);
+    await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('timestamp-settings')??'{}');localStorage.setItem('timestamp-settings',JSON.stringify({...s,autoTrashAfterDownload:true}));});
+    await page.reload();await page.locator('.thumbnail').first().click();
+    await page.locator('.preview-actions .btn-primary').click();
+    await expect(page.locator('.thumbnail')).toHaveCount(1);
+    await expect(page.locator('.preview-download-flight')).toHaveCount(0);
+    await expect(page.locator('.preview-actions .btn-primary')).toBeEnabled();
+});
