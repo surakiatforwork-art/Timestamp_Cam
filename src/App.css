@@ -1120,3 +1120,11 @@ button { touch-action: manipulation; }
 .update-notes { white-space:pre-wrap;overflow-wrap:anywhere;max-height:150px;overflow-y:auto; }
 .update-offer progress { width:100%;accent-color:var(--accent); }
 .capture-flight { border-radius:12px;box-shadow:0 6px 22px #0006;will-change:transform,opacity; }
+
+/* Removal acknowledgement: cross-slide the old frame out and new frame in.
+   The transient canvas is scoped to the viewport and never accepts input. */
+.preview-canvas-container .preview-removal-outgoing {
+    position:absolute; inset:0; z-index:2; width:100%; height:100%;
+    max-width:none; max-height:none; border-radius:0; pointer-events:none;
+    will-change:transform,opacity;
+}

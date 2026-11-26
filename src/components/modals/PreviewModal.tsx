@@ -50,6 +50,22 @@ export default function PreviewModal() {
     const motionRef = useRef<Animation | null>(null);
     const navigationPending = useRef(false);
     const [transitioning, setTransitioning] = useState(false);
+    // Keep the old frame only for the short removal transition, never an original blob.
+    const removal = useRef<{target:string; direction:number; outgoing:HTMLCanvasElement|null}|null>(null);
+    const removalAnimations = useRef<Animation[]>([]);
+    const removalTimer = useRef<ReturnType<typeof setTimeout>>();
+    const removalOverlay = useRef<HTMLCanvasElement|null>(null);
+    const [removalTransition,setRemovalTransition] = useState(false);
+    function clearRemovalVisuals() {
+        clearTimeout(removalTimer.current);
+        removalAnimations.current.forEach(a=>a.cancel());
+        removalAnimations.current=[];
+        const overlay=removalOverlay.current;
+        if(overlay){overlay.remove();overlay.width=0;overlay.height=0;removalOverlay.current=null;}
+    }
+    function releaseSnapshot(frame:HTMLCanvasElement|null) {
+        if(frame){frame.remove();frame.width=0;frame.height=0;}
+    }
     const setOffset = (x: number) => {
         offsetRef.current = x;
         if (trackRef.current) trackRef.current.style.transform = `translate3d(${x}px,0,0)`;
@@ -89,7 +105,7 @@ export default function PreviewModal() {
     const activeIds = new Set(state.photos.map(item => item.id));
     const sequence = (state.previewSequence ?? state.photos.map(item => item.id)).filter(id => activeIds.has(id));
     const position = sequence.indexOf(state.previewPhotoId ?? '');
-    const busy = isDownloading || isDeleting || isLoadingGPS || isSearchingLocation;
+    const busy = isDownloading || isDeleting || isLoadingGPS || isSearchingLocation || removalTransition;
 
     useEffect(() => {
         setRemarkDraft(photo?.remark ?? '');
@@ -104,10 +120,49 @@ export default function PreviewModal() {
         pointersRef.current.clear(); swipeRef.current = null;
         transformRef.current = { zoom: 1, x: 0, y: 0 };
         setZoom(1); setPan({ x: 0, y: 0 }); setLocationQuery('');
+        const pending=removal.current;
+        if(!pending || pending.target!==photo?.id)return;
+        removal.current=null;
+        clearRemovalVisuals();
+        navigationPending.current=true;
+        setTransitioning(true);setRemovalTransition(true);
+        const viewport=viewportRef.current;
+        const incoming=viewport?.querySelector<HTMLElement>('.preview-slide[data-relative="0"]');
+        const finish=()=>{
+            clearRemovalVisuals();
+            navigationPending.current=false;
+            setTransitioning(false);setRemovalTransition(false);
+        };
+        // Keep a short tap guard even when system animations are disabled.
+        if(reducedMotion()||!viewport||!incoming||typeof incoming.animate!=='function'){
+            releaseSnapshot(pending.outgoing);
+            removalTimer.current=setTimeout(finish,250);
+            return;
+        }
+        const distance=Math.min(96,viewport.clientWidth*.24)*pending.direction;
+        const duration=380;
+        const easing='cubic-bezier(.2,.7,.25,1)';
+        if(pending.outgoing){
+            const old=pending.outgoing;
+            viewport.appendChild(old);removalOverlay.current=old;
+            removalAnimations.current.push(old.animate([
+                {transform:'translate3d(0,0,0)',opacity:1},
+                {transform:`translate3d(${-distance}px,0,0)`,opacity:0}
+            ],{duration,easing,fill:'forwards'}));
+        }
+        removalAnimations.current.push(incoming.animate([
+            {transform:`translate3d(${distance}px,0,0)`,opacity:.25},
+            {transform:'translate3d(0,0,0)',opacity:1}
+        ],{duration,easing,fill:'both'}));
+        // The safety lock survives React's normal slide rebase and a dropped animation frame.
+        removalTimer.current=setTimeout(finish,duration+80);
     }, [photo?.id]);
     useEffect(() => () => {
         motionRef.current?.cancel(); motionRef.current = null; navigationPending.current = false;
         zoomMotion.current?.cancel(); dismissMotion.current?.cancel(); backdropMotion.current?.cancel();
+        clearRemovalVisuals();
+        if(removal.current)releaseSnapshot(removal.current.outgoing);
+        removal.current=null;
     }, []);
     useBackHandler(60,()=>{
         if (!photo) {closeModal();return true;}
@@ -269,42 +324,72 @@ export default function PreviewModal() {
         }
     };
 
+    // Snapshot the visible preview, including its current zoom/pan. This is a small
+    // transient canvas; no extra decode of the original and no stored duplicate.
+    function snapshotPreview():HTMLCanvasElement|null {
+        if(reducedMotion())return null;
+        const viewport=viewportRef.current, canvas=viewport?.querySelector<HTMLCanvasElement>('.active-preview-canvas');
+        if(!viewport||!canvas||!canvas.width||!canvas.height||getComputedStyle(canvas).visibility!=='visible')return null;
+        const frame=viewport.getBoundingClientRect(), rect=canvas.getBoundingClientRect();
+        if(!frame.width||!frame.height||!rect.width||!rect.height)return null;
+        const old=document.createElement('canvas');
+        old.width=Math.max(1,Math.round(frame.width));old.height=Math.max(1,Math.round(frame.height));
+        const ctx=old.getContext('2d');
+        if(!ctx)return null;
+        ctx.fillStyle='#000';ctx.fillRect(0,0,old.width,old.height);
+        ctx.drawImage(canvas,rect.left-frame.left,rect.top-frame.top,rect.width,rect.height);
+        old.className='preview-removal-outgoing';old.setAttribute('aria-hidden','true');
+        return old;
+    }
     // Prefer the previous photo in the current visual sequence, then the next.
-    // If a group is exhausted, continue in the remaining library instead of closing prematurely.
-    function afterRemoval() {
-        const next = sequence[position-1] ?? sequence[position+1];
-        if (next) { dispatch({type:'SET_PREVIEW_PHOTO_ID',payload:next}); return; }
-        const all = state.photos.map(p=>p.id), index=all.indexOf(photo!.id);
-        const fallback = all[index-1] ?? all[index+1];
-        if (fallback) {
-            dispatch({type:'SET_PREVIEW_SEQUENCE',payload:all.filter(id=>id!==photo!.id)});
-            dispatch({type:'SET_PREVIEW_PHOTO_ID',payload:fallback});
-        } else closeModal();
+    // If a group is exhausted, continue in the remaining library.
+    function afterRemoval(outgoing:HTMLCanvasElement|null) {
+        const previous=sequence[position-1], next=sequence[position+1];
+        const all=state.photos.map(p=>p.id), index=all.indexOf(photo!.id);
+        const target=previous??next??all[index-1]??all[index+1];
+        if(!target){releaseSnapshot(outgoing);closeModal();return;}
+        const direction=previous||(!next&&all[index-1])?-1:1;
+        removal.current={target,direction,outgoing};
+        navigationPending.current=true;setTransitioning(true);setRemovalTransition(true);
+        if(!previous&&!next)dispatch({type:'SET_PREVIEW_SEQUENCE',payload:all.filter(id=>id!==photo!.id)});
+        dispatch({type:'SET_PREVIEW_PHOTO_ID',payload:target});
     }
     const handleDownload = async () => {
         if (busy || actionLock.current || navigationPending.current || closing.current) return;
-        if (state.settings.autoTrashAfterDownload && hasUnsavedRemark() &&
-            !await confirmAction({title:'Remark ยังไม่ได้บันทึก',message:'ดาวน์โหลดด้วยข้อมูลที่บันทึกไว้และย้ายภาพไปถังขยะหรือไม่?',action:'ดาวน์โหลด',kind:'warning'})) return;
         actionLock.current=true; setIsDownloading(true);
+        let outgoing:HTMLCanvasElement|null=null;
         try {
+            if (state.settings.autoTrashAfterDownload && hasUnsavedRemark() &&
+                !await confirmAction({title:'Remark ยังไม่ได้บันทึก',message:'ดาวน์โหลดด้วยข้อมูลที่บันทึกไว้และย้ายภาพไปถังขยะหรือไม่?',action:'ดาวน์โหลด',kind:'warning'})) return;
             const index = state.photos.findIndex(p=>p.id===photo.id);
             const saved = await downloadOne(photo,state.settings,downloadFormat,jpegQuality,index);
+            if(saved.confirmed&&state.settings.autoTrashAfterDownload)outgoing=snapshotPreview();
             const moved = await finishDownload({success:true,confirmedIds:saved.confirmed?[photo.id]:[]},1,state.settings.autoTrashAfterDownload,trashPhotos,showToast);
-            if (moved) afterRemoval();
+            if (moved) {afterRemoval(outgoing);outgoing=null;}
         } catch(e) {
             log(`Download failed: ${e}`,'error'); showToast('ดาวน์โหลดไม่สำเร็จ','error');
-        } finally { actionLock.current=false; setIsDownloading(false); }
+        } finally {releaseSnapshot(outgoing);actionLock.current=false;setIsDownloading(false);}
     };
     const handleDelete = async () => {
         if (busy || actionLock.current || navigationPending.current || closing.current) return;
+        // Lock before showing the dialog; confirmation is bound to this photo ID.
+        const id=photo.id;
         actionLock.current=true; setIsDeleting(true);
+        let outgoing:HTMLCanvasElement|null=null;
         try {
-            if (await trashPhotos([photo.id])) {
-                afterRemoval();
-                showToast('ย้ายรูปไปถังขยะแล้ว','info');
+            const accepted=await confirmAction({
+                title:`ย้ายรูปที่ ${position+1} ไปถังขยะ?`,
+                message:'คุณกำลังลบภาพด้วยตนเอง ภาพนี้จะถูกนำออกจากคลัง แต่สามารถกู้คืนได้จากถังขยะ'+(hasUnsavedRemark()?' ข้อความ Remark ที่ยังไม่บันทึกจะไม่ถูกเก็บไว้':''),
+                action:'ย้ายไปถังขยะ',kind:'trash',danger:true
+            });
+            if(!accepted)return;
+            outgoing=snapshotPreview();
+            if (await trashPhotos([id])) {
+                afterRemoval(outgoing);outgoing=null;
+                showToast('ย้ายรูปไปยังถังขยะแล้ว','info');
             }
-        } catch {showToast('ย้ายรูปไปถังขยะไม่สำเร็จ','error');}
-        finally {actionLock.current=false;setIsDeleting(false);}
+        } catch {showToast('ย้ายรูปไปยังถังขยะไม่สำเร็จ','error');}
+        finally {releaseSnapshot(outgoing);actionLock.current=false;setIsDeleting(false);}
     };
 
     const locationLat = photo.locationLatitude ?? state.settings.latitude;
@@ -528,10 +613,10 @@ export default function PreviewModal() {
                 <div className="preview-sheet-grip" aria-hidden="true" onPointerDown={gripStart} onPointerMove={gripMove} onPointerUp={gripEnd} onPointerCancel={gripEnd} onLostPointerCapture={gripEnd}><span/></div>
                 <div className="modal-header">
                     <h2 id="preview-sheet-title">รูปที่ {position + 1} / {sequence.length}</h2>
-                    <button className="icon-btn" aria-label="ปิดตัวอย่างภาพ" onClick={() => requestClose()}><X className="ui-icon" aria-hidden="true" /></button>
+                    <button className="icon-btn" aria-label="ปิดตัวอย่างภาพ" disabled={busy || transitioning} onClick={() => requestClose()}><X className="ui-icon" aria-hidden="true" /></button>
                 </div>
 
-                <div className="preview-canvas-container" ref={viewportRef}
+                <div className="preview-canvas-container" data-removal-transition={removalTransition ? "active" : undefined} ref={viewportRef}
                     onPointerDown={startGesture}
                     onPointerMove={moveGesture}
                     onPointerUp={endGesture} onPointerCancel={endGesture} onLostPointerCapture={endGesture}
@@ -547,7 +632,7 @@ export default function PreviewModal() {
                     <button type="button" className="preview-step" aria-label="รูปถัดไป" disabled={position < 0 || position >= sequence.length - 1 || busy || transitioning} onClick={() => navigatePhoto(1)}><ChevronRight className="ui-icon" aria-hidden="true" /></button>
                 </div>
 
-                <div className="preview-controls" style={{ pointerEvents: transitioning || isDeleting || isDownloading ? 'none' : undefined }}>
+                <div className="preview-controls" style={{ pointerEvents: transitioning || busy ? 'none' : undefined }}>
                     {/* Time settings for this photo */}
                     <div className="preview-section">
                         <h4>เวลาสำหรับรูปนี้</h4>
@@ -662,7 +747,7 @@ export default function PreviewModal() {
                     </div>
                 </div>
 
-                <div className="preview-actions" style={{ pointerEvents: transitioning || isDeleting || isDownloading ? 'none' : undefined }}>
+                <div className="preview-actions" style={{ pointerEvents: transitioning || busy ? 'none' : undefined }}>
                     <button
                         className="btn btn-primary"
                         onClick={handleDownload}
