@@ -33,7 +33,8 @@ export default memo(function LiveOverlay({videoRef,frameRef,settings,active}:Pro
             const geometry=getLiveOutputGeometry(fw,fh,settings);
             layout(output,geometry.output);layout(source,geometry.source);
             if(!visible()||!fontsReady||!video.videoWidth||!video.videoHeight)return;
-            const crop=calculateCaptureCrop(video.videoWidth,video.videoHeight,fw,fh,Number(video.dataset.captureZoom??1));
+            // Use the unzoomed frame as the stable overlay reference. Only video zooms.
+            const crop=calculateCaptureCrop(video.videoWidth,video.videoHeight,fw,fh,1);
             const ow=settings.outputMode==='original'?crop.outW:settings.presetSize.w;
             const oh=settings.outputMode==='original'?crop.outH:settings.presetSize.h;
             // Cap density and surface dimensions on low-end devices.
@@ -79,7 +80,6 @@ export default memo(function LiveOverlay({videoRef,frameRef,settings,active}:Pro
         const resize=new ResizeObserver(schedule);resize.observe(frame);
         video.addEventListener('loadedmetadata',schedule);
         video.addEventListener('resize',schedule);
-        video.addEventListener('timestamp-zoom-change',schedule);
         document.addEventListener('visibilitychange',visibility);
         window.addEventListener('native-app-resume',schedule);
         // Geometry must update immediately; text waits for the same bundled font as export.
@@ -91,7 +91,6 @@ export default memo(function LiveOverlay({videoRef,frameRef,settings,active}:Pro
         return ()=>{
             stopped=true;unsubscribe();clearTimer();cancelAnimationFrame(raf);resize.disconnect();
             video.removeEventListener('loadedmetadata',schedule);video.removeEventListener('resize',schedule);
-            video.removeEventListener('timestamp-zoom-change',schedule);
             document.removeEventListener('visibilitychange',visibility);
             window.removeEventListener('native-app-resume',schedule);
             source.style.left='';source.style.top='';source.style.width='';source.style.height='';

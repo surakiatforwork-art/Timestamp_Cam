@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { captureFromVideo, processImportedImage } from '../lib/canvas';
+import { calculateCaptureCrop, captureFromVideo, processImportedImage } from '../lib/canvas';
 import { generateId } from '../lib/format';
 import { snapshotLiveLocation } from '../lib/liveLocation';
 import { log } from '../lib/logger';
@@ -38,6 +38,7 @@ export function useCapture() {
             const isFrontCamera = state.facingMode === 'user';
 
             try {
+                const reference=calculateCaptureCrop(video.videoWidth,video.videoHeight,actualVfW,actualVfH,1);
                 const { blob, width, height } = captureFromVideo(
                     video,
                     actualVfW,
@@ -54,6 +55,8 @@ export function useCapture() {
                     baseBlob,
                     width,
                     height,
+                    overlayReferenceWidth: reference.outW,
+                    overlayReferenceHeight: reference.outH,
                     createdAtISO: now,
                     timeMode: 'now',
                     timeValueISO: now,

@@ -33,9 +33,12 @@ export default function Stage() {
         if (videoRef.current) {
             videoRef.current.dataset.captureZoom = String(next);
             videoRef.current.style.setProperty('--camera-zoom', String(next));
-            videoRef.current.dispatchEvent(new Event('timestamp-zoom-change'));
         }
         setZoom(Math.round(next * 10) / 10);
+    };
+    const cycleZoom=()=>{
+        const current=zoomRef.current;
+        setCameraZoom(current<1.95?2:current<2.95?3:1);
     };
     useLayoutEffect(() => {
         points.current.clear(); gesture.current = null;
@@ -207,7 +210,7 @@ export default function Stage() {
 
                     <div ref={flashRef} className="camera-flash" aria-hidden="true" />
                     {showVideo && focus && <span className="camera-focus-ring" aria-label="กำลังโฟกัส" style={{left:focus.x,top:focus.y}} />}
-                    {showVideo && <button className="camera-zoom-indicator" type="button" aria-label="คืนระยะซูม 1 เท่า" onClick={() => setCameraZoom(1)}>{zoom.toFixed(1)}×</button>}
+                    {showVideo && <button className="camera-zoom-indicator" type="button" aria-label={`ซูม ${zoom.toFixed(1)} เท่า · แตะเพื่อเปลี่ยนระดับ`} title="เปลี่ยนระดับซูม" onClick={cycleZoom}>{zoom.toFixed(1)}×</button>}
 
                 </div>
             </div>

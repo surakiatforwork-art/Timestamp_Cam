@@ -84,7 +84,7 @@ test('camera shutter feedback and stable aspect ratio on camera toggle', async (
     await expect(shutter).toBeEnabled();
     await expect(page.locator('.camera-zoom-indicator')).toHaveText('1.0×');
 });
-test('camera pinch zoom changes saved crop and resets to 1x', async ({page, context, isMobile}) => {
+test('camera pinch zoom changes saved crop and button cycles back to 1x', async ({page, context, isMobile}) => {
     test.skip(!isMobile,'Real multi-touch uses the mobile project');
     await page.goto('/');
     const video = page.locator('.viewfinder video'), frame = page.locator('.viewfinder');
@@ -108,6 +108,9 @@ test('camera pinch zoom changes saved crop and resets to 1x', async ({page, cont
         return images.map(img => img.naturalWidth);
     });
     expect(widths[1]).toBeCloseTo(widths[0]/2,0);
+    await zoom.click();
+    await expect(zoom).toHaveText('3.0×');
+    await expect(video).toHaveAttribute('data-capture-zoom','3');
     await zoom.click();
     await expect(zoom).toHaveText('1.0×');
     await expect(video).toHaveAttribute('data-capture-zoom','1');

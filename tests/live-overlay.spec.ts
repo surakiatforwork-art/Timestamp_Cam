@@ -107,3 +107,66 @@ test('GPS live overlay follows new fixes, freezes capture and import metadata, s
     await page.waitForTimeout(1300);
     expect(await seen('13.770000')).toBe(false);
 });
+
+test('zoom cycles 1x 2x 3x without resizing or repainting static stamp; export keeps proportional layout',async({page})=>{
+    await page.addInitScript(()=>{
+        localStorage.setItem('timestamp-settings',JSON.stringify({timestampFormat:'iso',locationMode:'manual',locationEnabled:true,showLatLng:true,latitude:13.85,longitude:100.53,showRemark:true,defaultRemark:'Long remark with several words for stable wrapping',fontMode:'fixed',fontFixedPx:32,overlayPadding:26,locationFrame:{x:.15,y:.25,width:.7,height:.7}}));
+        const original=CanvasRenderingContext2D.prototype.fillText;
+        (window as any).stampCalls=[];
+        CanvasRenderingContext2D.prototype.fillText=function(text,x,y,...rest){
+            if(this.canvas.className==='live-overlay-location')(window as any).stampCalls.push(text);
+            return original.call(this,text,x,y,...rest);
+        };
+    });
+    await page.goto('/');
+    const overlay=page.locator('.live-overlay-output'),button=page.locator('.camera-zoom-indicator'),video=page.locator('.viewfinder video');
+    await expect.poll(()=>page.evaluate(()=>(window as any).stampCalls.length)).toBeGreaterThan(1);
+    const snapshot=()=>overlay.evaluate(el=>{
+        const c=el.querySelector<HTMLCanvasElement>('.live-overlay-location')!,r=el.getBoundingClientRect();
+        return {w:c.width,h:c.height,width:r.width,height:r.height,x:r.x,y:r.y,pixels:c.toDataURL(),calls:[...(window as any).stampCalls],refW:Number((el as HTMLElement).dataset.outputWidth),refH:Number((el as HTMLElement).dataset.outputHeight)};
+    });
+    const first=await snapshot();
+    await expect(button).toHaveText('1.0×');
+    for(const level of [2,3,1]){
+        await button.click();
+        await expect(button).toHaveText(level.toFixed(1)+'×');
+        await expect(video).toHaveAttribute('data-capture-zoom',String(level));
+        await page.waitForTimeout(100);
+        expect(await snapshot()).toEqual(first);
+    }
+    await page.locator('.shutter-btn').click();
+    await expect(page.locator('.thumbnail')).toHaveCount(1);
+    await button.click();
+    await page.locator('.shutter-btn').click();
+    await expect(page.locator('.thumbnail')).toHaveCount(2);
+    const result=await page.evaluate(async()=>{
+        const {db}=await import('/src/lib/legacyDb.ts');
+        const {renderPhotoToCanvas}=await import('/src/lib/canvas.ts');
+        const {loadSettings}=await import('/src/lib/settings.ts');
+        const settings=loadSettings();
+        const photos=(await db.photos.toArray()).sort((a,b)=>b.width-a.width);
+        const measurements=[];
+        for(const p of photos){
+            const seen:{text:string;size:number;x:number;y:number}[]=[];
+            const old=CanvasRenderingContext2D.prototype.fillText;
+            CanvasRenderingContext2D.prototype.fillText=function(text,x,y,...rest){
+                if(!this.canvas.className){const m=this.getTransform();seen.push({text,size:parseFloat(this.font.match(/([0-9.]+)px/)![1])/this.canvas.width,x:m.e/this.canvas.width,y:m.f/this.canvas.height});}
+                return old.call(this,text,x,y,...rest);
+            };
+            try{
+                const canvas=await renderPhotoToCanvas({...p,thumbUrl:''},settings);
+                measurements.push({w:canvas.width,h:canvas.height,refW:p.overlayReferenceWidth,refH:p.overlayReferenceHeight,seen:seen.filter(x=>!x.text.includes('Network:')&&!x.text.includes('Local:'))});
+            }finally{CanvasRenderingContext2D.prototype.fillText=old;}
+        }
+        return measurements;
+    });
+    expect(result[0].w).toBeCloseTo(result[1].w*2,0);
+    expect(result[0].refW).toBe(result[1].refW);
+    expect(result[0].refH).toBe(result[1].refH);
+    expect(result[0].seen.map(x=>x.text)).toEqual(result[1].seen.map(x=>x.text));
+    for(let i=0;i<result[0].seen.length;i++){
+        expect(result[1].seen[i].size).toBeCloseTo(result[0].seen[i].size,3);
+        expect(result[1].seen[i].x).toBeCloseTo(result[0].seen[i].x,2);
+        expect(result[1].seen[i].y).toBeCloseTo(result[0].seen[i].y,2);
+    }
+});

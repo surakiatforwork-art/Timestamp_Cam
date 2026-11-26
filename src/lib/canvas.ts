@@ -379,9 +379,18 @@ export async function renderPhotoToCanvas(
     img.close();
 
     const overlay=getPhotoOverlay(photo,settings);
-    await ensureOverlayFontReady(overlayFontSize(outputW,outputH,settings,scale),settings.overlayFontFamily,settings.overlayFontWeight);
-    drawOverlayLayer(ctx,canvasW,canvasH,outputW,outputH,scale,settings,overlay.timeLines,'time');
-    drawOverlayLayer(ctx,canvasW,canvasH,outputW,outputH,scale,settings,overlay.locationLines,'location');
+    // Original captures keep their true cropped pixel size, but stamps retain the
+    // same relative sizing/padding as the 1x live preview. Older/imported images
+    // and preset output retain the existing rendering behavior.
+    const useReference=settings.outputMode==='original'
+        && Number.isFinite(photo.overlayReferenceWidth) && Number.isFinite(photo.overlayReferenceHeight)
+        && photo.overlayReferenceWidth!>=outputW && photo.overlayReferenceHeight!>=outputH;
+    const refW=useReference?photo.overlayReferenceWidth!:outputW;
+    const refH=useReference?photo.overlayReferenceHeight!:outputH;
+    const overlayScale=scale*Math.min(outputW/refW,outputH/refH);
+    await ensureOverlayFontReady(overlayFontSize(refW,refH,settings,overlayScale),settings.overlayFontFamily,settings.overlayFontWeight);
+    drawOverlayLayer(ctx,canvasW,canvasH,refW,refH,overlayScale,settings,overlay.timeLines,'time');
+    drawOverlayLayer(ctx,canvasW,canvasH,refW,refH,overlayScale,settings,overlay.locationLines,'location');
 
     return canvas;
 }

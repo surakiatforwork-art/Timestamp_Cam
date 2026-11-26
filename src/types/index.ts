@@ -22,6 +22,9 @@ export interface PhotoRecord {
     baseBlob: Blob;
     width: number;
     height: number;
+    // Optional 1x camera dimensions preserve normalized stamp size after digital crop.
+    overlayReferenceWidth?: number;
+    overlayReferenceHeight?: number;
     createdAtISO: string;
     timeMode: 'now' | 'custom';
     timeValueISO: string;
