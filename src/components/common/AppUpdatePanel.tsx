@@ -41,7 +41,7 @@ export default function AppUpdatePanel({onBusy}:{onBusy:(busy:boolean)=>void}){
     const busy=phase==='check'||phase==='download'||phase==='install';
     return <section className="settings-section app-update-panel">
         <h3><RefreshCw className="ui-icon" aria-hidden="true"/> อัปเดตแอป</h3>
-        <div className="settings-row"><label>เวอร์ชันที่ติดตั้ง</label><strong>{release?.installed??'1.5.4'}</strong></div>
+        <div className="settings-row"><label>เวอร์ชันที่ติดตั้ง</label><strong>{release?.installed??'1.5.5'}</strong></div>
         <p className="settings-note">ตรวจสอบจาก GitHub Releases เมื่อคุณต้องการเท่านั้น ไม่บังคับอัปเดต</p>
         {!native?<p className="settings-note">รองรับการติดตั้งอัปเดตบน Android</p>:<>
             <button className="btn btn-secondary update-check" disabled={busy} onClick={()=>void run('check')}><RefreshCw className={`ui-icon ${phase==='check'?'spinning':''}`}/> {phase==='check'?'กำลังตรวจสอบ…':'ตรวจสอบเวอร์ชันล่าสุด'}</button>

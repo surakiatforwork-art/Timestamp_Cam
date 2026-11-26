@@ -1,6 +1,6 @@
 import { isConfirmOpen } from '../common/ConfirmDialog';
-import { CalendarDays, RefreshCw, Timer, ImagePlus, LoaderCircle } from 'lucide-react';
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { CalendarDays, RefreshCw, Timer, Flashlight, FlashlightOff } from 'lucide-react';
+import { useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { setHardwareShutter } from '../../lib/deviceFeedback';
 import { useApp } from '../../context/AppContext';
 import { useCamera } from '../../hooks/useCamera';
@@ -11,7 +11,7 @@ import PhotoGallery from './PhotoGallery';
 
 export default function BottomControls() {
     const { state, dispatch } = useApp();
-    const { videoRef, cameraOn, cameraStatus, hasMultipleCameras, switchCamera } = useCamera();
+    const { videoRef, cameraOn, cameraStatus, hasMultipleCameras, switchCamera, torchOn, hasTorch, toggleTorch } = useCamera();
     const { capturePhoto, importPhotos, isCapturing } = useCapture();
 
     const { photos, settings } = state;
@@ -28,6 +28,14 @@ export default function BottomControls() {
     }, [importPhotos]);
 
     const [pickerOpen, setPickerOpen] = useState(false);
+    const [torchBusy,setTorchBusy]=useState(false);
+    const torchLock=useRef(false);
+    const canUseTorch=cameraOn&&cameraStatus==='ready'&&hasTorch&&!state.importProgress&&!state.downloadProgress&&!torchBusy;
+    const handleTorch=async()=>{
+        if(!canUseTorch||torchLock.current)return;
+        torchLock.current=true;setTorchBusy(true);
+        try{await toggleTorch();}finally{torchLock.current=false;setTorchBusy(false);}
+    };
     useEffect(() => {
         const open = () => setPickerOpen(true), close = () => setPickerOpen(false);
         window.addEventListener('timestamp-picker-open', open);
@@ -35,7 +43,7 @@ export default function BottomControls() {
         return () => { window.removeEventListener('timestamp-picker-open', open); window.removeEventListener('timestamp-picker-close', close); };
     }, []);
     const handleCapture = async () => {
-        if (!cameraOn || !videoRef.current || cameraStatus !== 'ready' || isCapturing || state.activeModal !== "none" || pickerOpen || isConfirmOpen() || state.importProgress || state.downloadProgress) return;
+        if (!cameraOn || !videoRef.current || cameraStatus !== 'ready' || isCapturing || state.activeModal !== "none" || pickerOpen || document.querySelector('.topbar-more-panel') || isConfirmOpen() || state.importProgress || state.downloadProgress) return;
         await capturePhoto(videoRef.current);
     };
 
@@ -113,10 +121,10 @@ export default function BottomControls() {
             {/* Action Buttons */}
             <div className="action-buttons">
                 <div className="action-btn-left">
-                    <button className="capture-side-btn" onClick={() => window.dispatchEvent(new Event('timestamp-open-import'))}
-                        disabled={state.importProgress !== null} title="นำเข้ารูป">
-                        {state.importProgress ? <LoaderCircle className="ui-icon spinning" aria-hidden="true" /> : <ImagePlus className="ui-icon" aria-hidden="true" />}
-                        <span>นำเข้ารูป</span>
+                    <button className={`capture-side-btn torch-side-btn ${torchOn?'torch-active':''}`} onClick={()=>void handleTorch()}
+                        disabled={!canUseTorch} title="แฟลช" aria-label={torchOn?'ปิดแฟลช':'เปิดแฟลช'} aria-pressed={torchOn}>
+                        {torchOn?<Flashlight className="ui-icon" aria-hidden="true"/>:<FlashlightOff className="ui-icon" aria-hidden="true"/>}
+                        <span>{torchOn?'แฟลชเปิด':'แฟลชปิด'}</span>
                     </button>
                 </div>
 

@@ -238,7 +238,7 @@ export default function SettingsModal() {
                         <div className="settings-category-list">{categories.slice(4,6).map(renderCategory)}</div>
                         <div className="settings-list-label">ระบบ</div>
                         <div className="settings-category-list">{categories.slice(6).map(renderCategory)}</div>
-                        <p className="settings-version">Timestamp Cam · v1.5.4</p>
+                        <p className="settings-version">Timestamp Cam · v1.5.5</p>
                     </div>}
                     {page && <div key={page} className="settings-detail">
                     {/* Time Section */}

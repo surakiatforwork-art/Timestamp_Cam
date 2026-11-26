@@ -47,7 +47,8 @@ async function savedOrder(page: Page) {
 
 test('active originals open before trash; progress, reminder and manual restore preserve old images', async ({ page }) => {
     await seed(page, 4, 250);
-    await page.getByTitle('ถังขยะ', { exact: true }).click();
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
+    await page.getByTitle('ถังขยะ',{exact:true}).click();
     await expect(page.locator('.trash-load-status progress')).toBeVisible();
     await expect(page.getByRole('button', { name: 'ล้างถังขยะ', exact: true })).toBeDisabled();
     await expect(page.locator('.trash-item')).toHaveCount(250);
@@ -200,7 +201,8 @@ test('group members drag independently and selected download and trash work in b
     await expect(main.locator('.thumbnail').first()).toHaveAttribute('aria-pressed', 'true');
     await downloadAndRemove();
     await expect(main.locator('.thumbnail')).toHaveCount(2);
-    await page.getByTitle('ถังขยะ', { exact: true }).click();
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
+    await page.getByTitle('ถังขยะ',{exact:true}).click();
     await expect(page.locator('.trash-item')).toHaveCount(2);
 });
 
@@ -656,11 +658,13 @@ test('deleting in preview prefers previous then next and closes only at the last
     await page.getByRole('alertdialog').getByRole('button',{name:'ย้ายไปถังขยะ',exact:true}).click();
     await expect(page.locator('.preview-modal')).toHaveCount(0);
     await expect(page.locator('.thumbnail')).toHaveCount(0);
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
     await page.getByTitle('ถังขยะ',{exact:true}).click();
     await expect(page.locator('.trash-item')).toHaveCount(4);
 });
 test('auto trash toggle persists; only confirmed exports move to trash including partial success',async({page})=>{
     await seed(page,4);
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
     await page.getByTitle('ตั้งค่า',{exact:true}).click();
     await page.locator('.settings-category').filter({hasText:'ดาวน์โหลด'}).click();
     const toggle=page.getByRole('switch',{name:'ลบภาพอัตโนมัติหลังดาวน์โหลด'});
@@ -668,6 +672,7 @@ test('auto trash toggle persists; only confirmed exports move to trash including
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-checked','true');
     await page.reload();
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
     await page.getByTitle('ตั้งค่า',{exact:true}).click();
     await page.locator('.settings-category').filter({hasText:'ดาวน์โหลด'}).click();
     await expect(toggle).toHaveAttribute('aria-checked','true');
@@ -682,6 +687,7 @@ test('auto trash toggle persists; only confirmed exports move to trash including
     await expect(page.locator('.thumbnail')).toHaveCount(3);
     await expect(page.locator('[data-card-id="photo-0"]')).toHaveCount(0);
     await expect(page.locator('[data-card-id="photo-1"]')).toHaveCount(1);
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
     await page.getByTitle('ถังขยะ',{exact:true}).click();
     await expect(page.locator('.trash-item')).toHaveCount(1);
 });
@@ -736,6 +742,7 @@ test('confirmation back cancels deletion and permanent deletion explicitly confi
     await page.getByTitle('ลบทั้งหมด',{exact:true}).click();
     await dialog.getByRole('button',{name:'ย้ายไปถังขยะ',exact:true}).click();
     await expect(page.locator('.thumbnail')).toHaveCount(0);
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
     await page.getByTitle('ถังขยะ',{exact:true}).click();
     await expect(page.locator('.trash-item')).toHaveCount(3);
     await page.getByRole('button',{name:'ล้างถังขยะ',exact:true}).click();
@@ -783,6 +790,7 @@ test('back protects unsaved remark and returns from batch confirmation without s
 test('settings categories preserve config, show live summaries and support hierarchical back',async({page})=>{
     await seed(page,3);
     const back=()=>page.evaluate(()=>window.dispatchEvent(new Event('native-app-back')));
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
     await page.getByTitle('ตั้งค่า',{exact:true}).click();
     const root=page.locator('.settings-home');
     await expect(root.locator('.settings-category')).toHaveCount(7);
@@ -815,6 +823,7 @@ test('settings categories preserve config, show live summaries and support hiera
     await back();
     await expect(page.locator('.settings-modal')).toHaveCount(0);
     await page.reload();
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
     await page.getByTitle('ตั้งค่า',{exact:true}).click();
     await expect(root.getByRole('button',{name:'เวลาและ Timestamp'})).toContainText('กำหนดเอง');
     await expect(root.getByRole('button',{name:'Remark',exact:true})).toContainText('ปิด');
@@ -822,6 +831,7 @@ test('settings categories preserve config, show live summaries and support hiera
 test('settings map back returns to location category and reset confirmation is safe',async({page})=>{
     await seed(page,2);
     const back=()=>page.evaluate(()=>window.dispatchEvent(new Event('native-app-back')));
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
     await page.getByTitle('ตั้งค่า',{exact:true}).click();
     await page.locator('.settings-home').getByRole('button',{name:'ตำแหน่ง',exact:true}).click();
     await page.getByRole('button',{name:'เลือกบนแผนที่'}).click();
@@ -868,6 +878,7 @@ test('300-photo library supports batch edit, preview, trash and reload',async({p
     await page.getByRole('button',{name:'ลบที่เลือก',exact:true}).click();
     await page.getByRole('alertdialog').getByRole('button',{name:'ย้ายไปถังขยะ',exact:true}).click();
     await expect(rail.locator('.thumbnail')).toHaveCount(0);
+    await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
     await page.getByTitle('ถังขยะ',{exact:true}).click();
     await expect(page.locator('.trash-item')).toHaveCount(300);
     await page.locator('.trash-select-all input').check();

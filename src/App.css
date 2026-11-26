@@ -1128,3 +1128,14 @@ button { touch-action: manipulation; }
     max-width:none; max-height:none; border-radius:0; pointer-events:none;
     will-change:transform,opacity;
 }
+
+/* Topbar overflow: familiar anchored menu, with a non-destructive outside dismissal. */
+.topbar-menu-anchor { position:relative; z-index:92; }
+.topbar-menu-scrim { position:fixed; inset:0; z-index:91; background:transparent; }
+.topbar-menu-active { background:var(--accent-dim); color:var(--accent); }
+.topbar-more-panel { position:absolute; top:calc(100% + 7px); right:0; min-width:164px; max-width:calc(100vw - 24px); padding:5px; border:1px solid var(--border); border-radius:12px; background:var(--bg-secondary); box-shadow:0 8px 28px #0005; transform-origin:top right; animation:topbar-more-in 150ms cubic-bezier(.2,.8,.2,1) both; }
+.topbar-more-panel button { display:flex; align-items:center; gap:11px; width:100%; min-height:44px; text-align:left; padding:8px 12px; border-radius:8px; font-size:14px; }
+.topbar-more-panel button .ui-icon { color:var(--text-secondary); width:19px; height:19px; }
+.topbar-more-panel button:active,.topbar-more-panel button:focus-visible { background:var(--bg-tertiary); }
+@keyframes topbar-more-in { from {opacity:0;transform:translateY(-4px) scale(.96);} to {opacity:1;transform:translateY(0) scale(1);} }
+.torch-side-btn.torch-active { color:var(--accent); background:var(--accent-dim); }
