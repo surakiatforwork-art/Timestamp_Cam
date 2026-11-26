@@ -34,6 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
     fontAutoScale: 1.1,
     fontFixedPx: 32,
     locationEnabled: true,
+    locationMode: 'gps',
     showLatLng: false,
     showAddress: false,
     showSubdistrict: false,
@@ -58,7 +59,7 @@ export function loadSettings(): Settings {
         const saved = localStorage.getItem(SETTINGS_KEY);
         if (saved) {
             const parsed = JSON.parse(saved);
-            return { ...DEFAULT_SETTINGS, ...parsed };
+            return { ...DEFAULT_SETTINGS, ...parsed, globalTimeMode: 'now', locationMode: parsed.locationMode ?? (parsed.latitude != null && parsed.longitude != null ? 'manual' : 'gps') };
         }
     } catch (e) {
         console.error('Failed to load settings:', e);

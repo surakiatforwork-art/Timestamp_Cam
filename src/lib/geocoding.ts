@@ -62,6 +62,7 @@ export async function reverseGeocodeDetails(
             headers: {
                 'User-Agent': 'TimestampApp/1.0',
             },
+            signal: AbortSignal.timeout(10000),
         });
 
         if (!res.ok) return null;

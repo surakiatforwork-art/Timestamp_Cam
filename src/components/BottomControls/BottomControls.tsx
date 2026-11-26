@@ -1,16 +1,16 @@
 import { isConfirmOpen } from '../common/ConfirmDialog';
-import { CalendarDays, RefreshCw, Timer, Flashlight, FlashlightOff } from 'lucide-react';
+import { RefreshCw, Flashlight, FlashlightOff } from 'lucide-react';
 import { useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { setHardwareShutter } from '../../lib/deviceFeedback';
 import { useApp } from '../../context/AppContext';
 import { useCamera } from '../../hooks/useCamera';
 import { useCapture } from '../../hooks/useCapture';
-import { formatTimeSummary, formatLocationSummary } from '../../lib/format';
-import DateTimeWheelPicker from '../common/DateTimeWheelPicker';
+import { formatLocationSummary } from '../../lib/format';
+import { useLiveLocation,resolveActiveLocation } from '../../lib/liveLocation';
 import PhotoGallery from './PhotoGallery';
 
 export default function BottomControls() {
-    const { state, dispatch } = useApp();
+    const { state } = useApp();
     const { videoRef, cameraOn, cameraStatus, hasMultipleCameras, switchCamera, torchOn, hasTorch, toggleTorch } = useCamera();
     const { capturePhoto, importPhotos, isCapturing } = useCapture();
 
@@ -48,13 +48,11 @@ export default function BottomControls() {
     };
 
 
-    const timeSummary = formatTimeSummary(settings.globalTimeMode, settings.globalCustomTime);
-    const locationSummary = formatLocationSummary(
-        settings.locationEnabled,
-        settings.latitude,
-        settings.longitude,
-        settings.cachedAddress
-    );
+    const live=useLiveLocation();
+    const fix=resolveActiveLocation(settings,live);
+    const locationSummary=settings.locationEnabled&&settings.locationMode==='gps'&&fix.status!=='ready'
+        ? (fix.status==='waiting'?'กำลังหาตำแหน่ง GPS…':'GPS ไม่พร้อม · ตรวจสอบสิทธิ์')
+        : formatLocationSummary(settings.locationEnabled,fix.lat,fix.lng,fix.address);
 
     useEffect(() => {
         const active = cameraOn && cameraStatus === 'ready' && state.activeModal === 'none' && !pickerOpen && !state.importProgress && !state.downloadProgress;
@@ -75,38 +73,8 @@ export default function BottomControls() {
             <div className="meta-bar">
                 <div className="meta-row">
                     <span className="meta-label">เวลา</span>
-                    <span className="meta-value">{timeSummary}</span>
-                    <button
-                        className={`toggle meta-toggle ${settings.globalTimeMode === 'now' ? 'on' : ''}`}
-                        onClick={() => {
-                            dispatch({
-                                type: 'SET_SETTINGS',
-                                payload: {
-                                    globalTimeMode: settings.globalTimeMode === 'now' ? 'custom' : 'now',
-                                },
-                            });
-                        }}
-                        title={settings.globalTimeMode === 'now' ? 'ใช้เวลาปัจจุบัน' : 'ใช้เวลากำหนดเอง'}
-                    >
-                        <span className="toggle-knob">
-                            {settings.globalTimeMode === 'now' ? <Timer className="ui-icon" aria-hidden="true" /> : <CalendarDays className="ui-icon" aria-hidden="true" />}
-                        </span>
-                    </button>
+                    <span className="meta-value">เวลาปัจจุบัน</span>
                 </div>
-
-                {settings.globalTimeMode === 'custom' && (
-                    <div className="meta-row">
-                        <span className="meta-label"></span>
-                        <DateTimeWheelPicker
-                            value={settings.globalCustomTime}
-                            className="meta-time-input"
-                            onChange={(globalCustomTime) => dispatch({
-                                type: 'SET_SETTINGS',
-                                payload: { globalCustomTime },
-                            })}
-                        />
-                    </div>
-                )}
 
                 <div className="meta-row">
                     <span className="meta-label">ตำแหน่ง</span>

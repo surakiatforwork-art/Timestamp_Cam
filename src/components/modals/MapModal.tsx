@@ -109,6 +109,7 @@ export default function MapModal() {
             dispatch({
                 type: 'SET_SETTINGS',
                 payload: {
+                    locationMode: 'manual',
                     latitude: selectedLat,
                     longitude: selectedLng,
                     cachedAddress: resolved?.displayName ?? null,

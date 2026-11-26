@@ -25,7 +25,7 @@ function getBundledFontFamily(fontFamily: OverlayFontFamily): string | null {
     }
 }
 
-async function ensureOverlayFontReady(
+export async function ensureOverlayFontReady(
     fontSize: number,
     fontFamily: OverlayFontFamily,
     fontWeight: number
@@ -225,6 +225,56 @@ export function calculateFontSize(
     return Math.round(base * autoScale);
 }
 
+export type OverlaySource = Pick<Photo,'timeValueISO'|'locationLatitude'|'locationLongitude'|'locationAddress'|'locationDetails'|'remark'>;
+
+export function getPhotoOverlay(photo:OverlaySource,settings:Settings) {
+    const own=photo.locationLatitude!==undefined||photo.locationLongitude!==undefined;
+    return buildOverlayGroups(
+        photo.timeValueISO,settings.timestampFormat,settings.locationEnabled,
+        settings.showLatLng,settings.showAddress,settings.showSubdistrict,
+        settings.showDistrict,settings.showProvince,settings.showRemark,
+        own ? photo.locationLatitude ?? null : settings.latitude,own ? photo.locationLongitude ?? null : settings.longitude,
+        own ? photo.locationAddress ?? null : settings.cachedAddress,
+        own ? photo.locationDetails ?? null : settings.locationDetails,
+        photo.remark
+    );
+}
+
+export function overlayFontSize(outputW:number,outputH:number,settings:Settings,scale:number) {
+    return calculateFontSize(outputW,outputH,settings.fontMode,settings.fontAutoScale,settings.fontFixedPx)*scale;
+}
+
+// One text renderer for both exported images and the transparent camera layers.
+export function drawOverlayLayer(ctx:CanvasRenderingContext2D,canvasW:number,canvasH:number,
+    outputW:number,outputH:number,scale:number,settings:Settings,lines:string[],layer:'time'|'location') {
+    if(!lines.length)return;
+    renderOverlayInFrame(ctx,canvasW,canvasH,lines,
+        layer==='time'?settings.timeFrame:settings.locationFrame,
+        layer==='time'?settings.timeTextAlignment:settings.locationTextAlignment,
+        settings.overlayPadding*scale,overlayFontSize(outputW,outputH,settings,scale),
+        settings.overlayFontFamily,settings.overlayFontWeight,settings.overlayStrokeWidth*scale,settings.overlayFontHeightScale);
+}
+
+// Shared capture dimensions (including digital zoom) without allocating a canvas.
+export function calculateCaptureCrop(videoW:number,videoH:number,vfW:number,vfH:number,zoom=1) {
+    const crop=calculateCoverCrop(videoW,videoH,vfW,vfH);
+    const factor=Math.max(1,Math.min(3,Number.isFinite(zoom)?zoom:1));
+    const sw=crop.sw/factor,sh=crop.sh/factor;
+    return {sx:crop.sx+(crop.sw-sw)/2,sy:crop.sy+(crop.sh-sh)/2,sw,sh,
+        outW:Math.max(1,Math.round(sw)),outH:Math.max(1,Math.round(sh))};
+}
+
+export function getLiveOutputGeometry(vfW:number,vfH:number,settings:Settings) {
+    const ratio=settings.outputMode==='preset'?settings.presetSize.w/settings.presetSize.h:vfW/vfH;
+    const w=Math.min(vfW,vfH*ratio),h=w/ratio;
+    const output={x:(vfW-w)/2,y:(vfH-h)/2,w,h};
+    // Cover retains the full capture preview and shows the exact export crop.
+    // Contain displays the entire exported frame, including its black letterbox.
+    const factor=settings.outputMode==='preset'&&settings.fitMode==='contain'?Math.min(w/vfW,h/vfH):1;
+    const source={x:(vfW-vfW*factor)/2,y:(vfH-vfH*factor)/2,w:vfW*factor,h:vfH*factor};
+    return {output,source};
+}
+
 // Render photo to canvas with overlay
 export async function renderPhotoToCanvas(
     photo: Photo,
@@ -328,66 +378,10 @@ export async function renderPhotoToCanvas(
 
     img.close();
 
-    // Build time and location text separately so each group honors its own frame.
-    const overlay = buildOverlayGroups(
-        photo.timeValueISO,
-        settings.timestampFormat,
-        settings.locationEnabled,
-        settings.showLatLng,
-        settings.showAddress,
-        settings.showSubdistrict,
-        settings.showDistrict,
-        settings.showProvince,
-        settings.showRemark,
-        photo.locationLatitude ?? settings.latitude,
-        photo.locationLongitude ?? settings.longitude,
-        photo.locationLatitude != null && photo.locationLongitude != null ? photo.locationAddress ?? null : settings.cachedAddress,
-        photo.locationLatitude != null && photo.locationLongitude != null ? photo.locationDetails ?? null : settings.locationDetails,
-        photo.remark
-    );
-
-    // Calculate font size based on output size (not preview size)
-    const fontSize = calculateFontSize(
-        outputW,
-        outputH,
-        settings.fontMode,
-        settings.fontAutoScale,
-        settings.fontFixedPx
-    ) * scale;
-
-    await ensureOverlayFontReady(fontSize, settings.overlayFontFamily, settings.overlayFontWeight);
-
-    renderOverlayInFrame(
-        ctx,
-        canvasW,
-        canvasH,
-        overlay.timeLines,
-        settings.timeFrame,
-        settings.timeTextAlignment,
-        settings.overlayPadding * scale,
-        fontSize,
-        settings.overlayFontFamily,
-        settings.overlayFontWeight,
-        settings.overlayStrokeWidth * scale,
-        settings.overlayFontHeightScale
-    );
-
-    if (overlay.locationLines.length > 0) {
-        renderOverlayInFrame(
-            ctx,
-            canvasW,
-            canvasH,
-            overlay.locationLines,
-            settings.locationFrame,
-            settings.locationTextAlignment,
-            settings.overlayPadding * scale,
-            fontSize,
-            settings.overlayFontFamily,
-            settings.overlayFontWeight,
-            settings.overlayStrokeWidth * scale,
-            settings.overlayFontHeightScale
-        );
-    }
+    const overlay=getPhotoOverlay(photo,settings);
+    await ensureOverlayFontReady(overlayFontSize(outputW,outputH,settings,scale),settings.overlayFontFamily,settings.overlayFontWeight);
+    drawOverlayLayer(ctx,canvasW,canvasH,outputW,outputH,scale,settings,overlay.timeLines,'time');
+    drawOverlayLayer(ctx,canvasW,canvasH,outputW,outputH,scale,settings,overlay.locationLines,'location');
 
     return canvas;
 }
@@ -454,14 +448,7 @@ export function captureFromVideo(
 
     // Calculate crop to match viewfinder
     if (!videoW || !videoH || !vfWidth || !vfHeight) throw new Error('Camera frame is not ready');
-    const crop = calculateCoverCrop(videoW, videoH, vfWidth, vfHeight);
-    const factor = Math.max(1, Math.min(3, Number.isFinite(zoom) ? zoom : 1));
-    const sw = crop.sw / factor, sh = crop.sh / factor;
-    const sx = crop.sx + (crop.sw - sw) / 2, sy = crop.sy + (crop.sh - sh) / 2;
-
-    // Digital zoom crops at natural resolution instead of inventing extra pixels.
-    const outW = Math.round(sw);
-    const outH = Math.round(sh);
+    const {sx,sy,sw,sh,outW,outH}=calculateCaptureCrop(videoW,videoH,vfWidth,vfHeight,zoom);
 
     const canvas = document.createElement('canvas');
     canvas.width = outW;

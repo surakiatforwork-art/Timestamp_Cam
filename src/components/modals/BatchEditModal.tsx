@@ -1,3 +1,4 @@
+import { resolveActiveLocation } from '../../lib/liveLocation';
 import { useBackHandler } from '../../lib/backNavigation';
 import { Check, Clock, LocateFixed, MapPin, Search, PencilLine, X, LoaderCircle } from 'lucide-react';
 import { useRef, useState } from 'react';
@@ -29,11 +30,12 @@ export default function BatchEditModal({ photos, onClose }: { photos: Photo[]; o
     const busy = useRef(false);
     const settings = state.settings;
     const locationOf = (photo?: Photo): LocationSearchResult | null => {
-        const own = photo?.locationLatitude != null && photo?.locationLongitude != null;
-        const lat = own ? photo!.locationLatitude! : settings.latitude;
-        const lng = own ? photo!.locationLongitude! : settings.longitude;
+        const own = photo?.locationLatitude !== undefined || photo?.locationLongitude !== undefined;
+        const active=photo?{lat:settings.latitude,lng:settings.longitude,address:settings.cachedAddress,details:settings.locationDetails}:resolveActiveLocation(settings);
+        const lat = own ? photo!.locationLatitude ?? null : active.lat;
+        const lng = own ? photo!.locationLongitude ?? null : active.lng;
         if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-        return {lat,lng, displayName:own ? photo!.locationAddress ?? null : settings.cachedAddress, details:own ? photo!.locationDetails ?? null : settings.locationDetails};
+        return {lat,lng, displayName:own ? photo!.locationAddress ?? null : active.address, details:own ? photo!.locationDetails ?? null : active.details};
     };
     const destination = location === 'settings' ? locationOf() : location === 'copy' ? locationOf(source) : resolved;
     const fieldCount = Number(time !== 'keep') + Number(location !== 'keep') + Number(remarkMode !== 'keep');

@@ -167,7 +167,7 @@ function appReducer(state: AppState, action: Action): AppState {
         case 'DELETE_ALL_PHOTOS':
             return { ...state, photos: [] };
         case 'SET_SETTINGS': {
-            const newSettings = { ...state.settings, ...action.payload };
+            const newSettings = { ...state.settings, ...action.payload, globalTimeMode: 'now' as const };
             saveSettings(newSettings);
             return { ...state, settings: newSettings };
         }

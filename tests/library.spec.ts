@@ -799,15 +799,10 @@ test('settings categories preserve config, show live summaries and support hiera
     await expect(page.locator('#settings-time')).toBeVisible();
     await expect(page.locator('#settings-format')).toBeVisible();
     await expect(page.locator('#settings-location')).toHaveCount(0);
-    const time=page.getByRole('switch',{name:'ใช้เวลาปัจจุบัน',exact:true});
-    await time.click();
-    await expect(time).toHaveAttribute('aria-checked','false');
-    await page.locator('#settings-time .date-time-wheel-trigger').click();
+    await expect(page.getByRole('switch',{name:'ใช้เวลาปัจจุบัน',exact:true})).toHaveCount(0);
+    await expect(page.locator('#settings-time .date-time-wheel-trigger')).toHaveCount(0);
     await back();
-    await expect(page.locator('.datetime-picker')).toHaveCount(0);
-    await expect(page.locator('#settings-time')).toBeVisible();
-    await back();
-    await expect(root.getByRole('button',{name:'เวลาและ Timestamp'})).toContainText('กำหนดเอง');
+    await expect(root.getByRole('button',{name:'เวลาและ Timestamp'})).toContainText('เวลาปัจจุบัน');
     await root.getByRole('button',{name:'ขนาดและสัดส่วนภาพ'}).click();
     await page.locator('#settings-size select').first().selectOption('preset');
     await expect(page.locator('#settings-size select')).toHaveCount(4);
@@ -825,7 +820,7 @@ test('settings categories preserve config, show live summaries and support hiera
     await page.reload();
     await page.getByTitle('เมนูเพิ่มเติม',{exact:true}).click();
     await page.getByTitle('ตั้งค่า',{exact:true}).click();
-    await expect(root.getByRole('button',{name:'เวลาและ Timestamp'})).toContainText('กำหนดเอง');
+    await expect(root.getByRole('button',{name:'เวลาและ Timestamp'})).toContainText('เวลาปัจจุบัน');
     await expect(root.getByRole('button',{name:'Remark',exact:true})).toContainText('ปิด');
 });
 test('settings map back returns to location category and reset confirmation is safe',async({page})=>{

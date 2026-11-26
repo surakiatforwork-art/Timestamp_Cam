@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useLayoutEffect, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useLayoutEffect, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useApp } from '../../context/AppContext';
 import { useCamera } from '../../hooks/useCamera';
 import { calculateCoverCrop } from '../../lib/canvas';
+import LiveOverlay from './LiveOverlay';
 
 export default function Stage() {
     const { state } = useApp();
@@ -32,6 +33,7 @@ export default function Stage() {
         if (videoRef.current) {
             videoRef.current.dataset.captureZoom = String(next);
             videoRef.current.style.setProperty('--camera-zoom', String(next));
+            videoRef.current.dispatchEvent(new Event('timestamp-zoom-change'));
         }
         setZoom(Math.round(next * 10) / 10);
     };
@@ -102,14 +104,16 @@ export default function Stage() {
         const video = videoRef.current, frame = viewfinderRef.current;
         const track = (video?.srcObject as MediaStream | null)?.getVideoTracks()[0];
         if (!focusSupported || focusBusy.current || !track || !video || !frame || !video.videoWidth || !video.videoHeight) return;
-        const rect = frame.getBoundingClientRect(), crop = calculateCoverCrop(video.videoWidth,video.videoHeight,rect.width,rect.height);
+        const rect = (video.parentElement??frame).getBoundingClientRect(), crop = calculateCoverCrop(video.videoWidth,video.videoHeight,rect.width,rect.height);
+        if(x<rect.left||x>rect.right||y<rect.top||y>rect.bottom)return;
+        const frameRect=frame.getBoundingClientRect();
         const u = Math.max(0,Math.min(1,(x-rect.left)/rect.width)), v = Math.max(0,Math.min(1,(y-rect.top)/rect.height));
         const rawX = ((facingMode === 'user' ? 1-u : u)-.5)*crop.sw/zoomRef.current + video.videoWidth/2;
         const rawY = (v-.5)*crop.sh/zoomRef.current + video.videoHeight/2;
         const generation = ++focusGeneration.current;
         focusBusy.current = true;
         clearTimeout(focusTimer.current);
-        setFocus({x: Math.max(25,Math.min(rect.width-25,u*rect.width)),y:Math.max(25,Math.min(rect.height-25,v*rect.height))});
+        setFocus({x:rect.left-frameRect.left+Math.max(25,Math.min(rect.width-25,u*rect.width)),y:rect.top-frameRect.top+Math.max(25,Math.min(rect.height-25,v*rect.height))});
         try {
             await track.applyConstraints({ advanced: [{ focusMode:'single-shot', pointsOfInterest:[{ x:rawX/video.videoWidth,y:rawY/video.videoHeight }] } as MediaTrackConstraintSet] });
         } catch {
@@ -149,14 +153,6 @@ export default function Stage() {
         }
     };
 
-    // Calculate preset guide frame dimensions
-    const presetGuide = useMemo(() => {
-        if (settings.outputMode !== 'preset') return null;
-
-        const { w, h } = settings.presetSize;
-        return { w, h, ratio: w / h };
-    }, [settings.outputMode, settings.presetSize]);
-
     // Listen for import event from Topbar
     useEffect(() => {
         const handleImport = async (e: Event) => {
@@ -192,6 +188,7 @@ export default function Stage() {
                     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerEnd} onPointerCancel={pointerEnd} onLostPointerCapture={pointerEnd}
                     className={`viewfinder ${facingMode === 'user' ? 'front-camera' : ''}`}
                 >
+                    <div className="camera-source">
                     <video
                         ref={videoRef}
                         autoPlay
@@ -199,6 +196,8 @@ export default function Stage() {
                         muted
                         className={showVideo ? 'camera-live' : 'camera-hidden'}
                     />
+                    </div>
+                    {showVideo && <LiveOverlay videoRef={videoRef} frameRef={viewfinderRef} settings={settings} active={state.activeModal==='none' && !state.importProgress && !state.downloadProgress}/>}
 
                     {hintText && (
                         <div className="viewfinder-hint">
@@ -210,32 +209,8 @@ export default function Stage() {
                     {showVideo && focus && <span className="camera-focus-ring" aria-label="กำลังโฟกัส" style={{left:focus.x,top:focus.y}} />}
                     {showVideo && <button className="camera-zoom-indicator" type="button" aria-label="คืนระยะซูม 1 เท่า" onClick={() => setCameraZoom(1)}>{zoom.toFixed(1)}×</button>}
 
-                    {/* Preset Frame Guide */}
-                    {presetGuide && showVideo && (
-                        <PresetGuide ratio={presetGuide.ratio} width={presetGuide.w} height={presetGuide.h} />
-                    )}
                 </div>
             </div>
         </main>
-    );
-}
-
-// Preset frame guide overlay
-function PresetGuide({ ratio, width, height }: { ratio: number; width: number; height: number }) {
-    return (
-        <div className="preset-guide">
-            <div
-                className="preset-guide-frame"
-                style={{
-                    aspectRatio: `${width} / ${height}`,
-                    width: ratio < 0.75 ? '60%' : 'auto',
-                    height: ratio >= 0.75 ? '80%' : 'auto',
-                }}
-            >
-                <span className="preset-guide-label">
-                    Preset: {width}×{height}
-                </span>
-            </div>
-        </div>
     );
 }

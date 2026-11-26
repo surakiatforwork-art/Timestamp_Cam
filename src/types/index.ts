@@ -93,6 +93,7 @@ export interface Settings {
 
     // Location
     locationEnabled: boolean;
+    locationMode: 'gps' | 'manual';
     showLatLng: boolean;
     showAddress: boolean;
     showSubdistrict: boolean;

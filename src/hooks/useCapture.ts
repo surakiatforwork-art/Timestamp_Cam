@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { captureFromVideo, processImportedImage } from '../lib/canvas';
 import { generateId } from '../lib/format';
+import { snapshotLiveLocation } from '../lib/liveLocation';
 import { log } from '../lib/logger';
 import { vibrateForCapture } from '../lib/deviceFeedback';
 import type { PhotoRecord } from '../types';
@@ -25,7 +26,8 @@ export function useCapture() {
             setIsCapturing(true);
             vibrateForCapture();
             const capturedAt = new Date().toISOString();
-            const sourceRect = video.parentElement?.getBoundingClientRect() ?? video.getBoundingClientRect();
+            const capturedLocation=snapshotLiveLocation(state.settings);
+            const sourceRect = video.closest('.viewfinder')?.getBoundingClientRect() ?? video.parentElement?.getBoundingClientRect() ?? video.getBoundingClientRect();
             window.dispatchEvent(new Event('timestamp-capture-start'));
             const { width: vfWidth, height: vfHeight } = lastVfDimensions.current;
 
@@ -53,11 +55,9 @@ export function useCapture() {
                     width,
                     height,
                     createdAtISO: now,
-                    timeMode: state.settings.globalTimeMode,
-                    timeValueISO:
-                        state.settings.globalTimeMode === 'now'
-                            ? now
-                            : state.settings.globalCustomTime,
+                    timeMode: 'now',
+                    timeValueISO: now,
+                    ...capturedLocation,
                     sourceName: 'camera',
                     fromFrontMirror: isFrontCamera,
                     remark: state.settings.defaultRemark,
@@ -80,6 +80,8 @@ export function useCapture() {
     const importPhotos = useCallback(
         async (files: FileList | File[], _ordered = false) => {
             const fileArray = Array.from(files);
+            const capturedAt=new Date().toISOString();
+            const capturedLocation=snapshotLiveLocation(state.settings);
             log(`Importing ${fileArray.length} files`);
 
             let successCount = 0;
@@ -96,7 +98,7 @@ export function useCapture() {
 
                 try {
                     const { blob, width, height } = await processImportedImage(file);
-                    const now = new Date().toISOString();
+                    const now = capturedAt;
 
                     const record: PhotoRecord = {
                         id: generateId(),
@@ -104,11 +106,9 @@ export function useCapture() {
                         width,
                         height,
                         createdAtISO: now,
-                        timeMode: state.settings.globalTimeMode,
-                        timeValueISO:
-                            state.settings.globalTimeMode === 'now'
-                                ? now
-                                : state.settings.globalCustomTime,
+                        timeMode: 'now',
+                        timeValueISO: now,
+                        ...capturedLocation,
                         sourceName: file.name,
                         fromFrontMirror: false,
                         remark: state.settings.defaultRemark,

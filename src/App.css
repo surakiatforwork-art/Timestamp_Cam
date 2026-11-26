@@ -1139,3 +1139,10 @@ button { touch-action: manipulation; }
 .topbar-more-panel button:active,.topbar-more-panel button:focus-visible { background:var(--bg-tertiary); }
 @keyframes topbar-more-in { from {opacity:0;transform:translateY(-4px) scale(.96);} to {opacity:1;transform:translateY(0) scale(1);} }
 .torch-side-btn.torch-active { color:var(--accent); background:var(--accent-dim); }
+
+/* Transparent export preview: never samples camera video, never intercepts gestures. */
+.camera-source { position:absolute; inset:0; overflow:hidden; }
+.live-overlay-output { position:absolute; z-index:3; pointer-events:none; overflow:hidden; }
+.live-overlay-output.preset-cover { box-shadow:0 0 0 9999px rgba(0,0,0,.5); outline:1px dashed var(--accent); outline-offset:-1px; }
+.live-overlay-output.preset-contain { outline:1px dashed var(--accent); outline-offset:-1px; }
+.live-overlay-output canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }

@@ -3,9 +3,11 @@ import { test, expect } from '@playwright/test';
 test('wheel keeps settled values on taps and micro drags; confirmation saves current value', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.gallery-strip')).toBeVisible();
-    const toggle = page.locator('.meta-toggle');
-    if (await toggle.evaluate(e => e.classList.contains('on'))) await toggle.click();
-    const trigger = page.locator('.meta-time-input');
+    await expect(page.locator('.meta-toggle')).toHaveCount(0);
+    await page.locator('.shutter-btn').click();
+    await expect(page.locator('.thumbnail')).toHaveCount(1);
+    await page.locator('.thumbnail').first().click();
+    const trigger = page.locator('.preview-modal .date-time-wheel-trigger');
     await trigger.click();
     const seconds = page.getByRole('spinbutton', { name: 'วินาที', exact: true });
     const minutes = page.getByRole('spinbutton', { name: 'นาที', exact: true });

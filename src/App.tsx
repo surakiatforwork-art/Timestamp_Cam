@@ -1,5 +1,6 @@
 import './App.css';
 import { useEffect } from 'react';
+import { useLocationTracker } from './lib/liveLocation';
 import { handleBack, useBackHandler } from './lib/backNavigation';
 import ConfirmDialog from './components/common/ConfirmDialog';
 import { useApp } from './context/AppContext';
@@ -17,6 +18,7 @@ import SharedImageImport from './components/common/SharedImageImport';
 
 function App() {
     const { state, retryPhotoStorage } = useApp();
+    useLocationTracker(state.settings);
 
     useBackHandler(80,()=>state.storageStatus!=='ready' || !!state.downloadProgress || !!state.importProgress);
     useEffect(()=>{

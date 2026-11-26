@@ -5,10 +5,10 @@ import { ArrowDown, ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight, ArrowU
 import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { PRESET_SIZES, resetSettings } from '../../lib/settings';
-import { getCurrentPosition, reverseGeocodeDetails, forwardGeocode } from '../../lib/geocoding';
+import { requestLocationPermission, reverseGeocodeDetails, forwardGeocode } from '../../lib/geocoding';
 import { getLogs, clearLogs, copyLogs, subscribeToLogs } from '../../lib/logger';
 import type { OverlayFontFamily, OverlayTextAlignment, PresetSize, TimestampFormat } from '../../types';
-import DateTimeWheelPicker from '../common/DateTimeWheelPicker';
+import { useLiveLocation } from '../../lib/liveLocation';
 import OverlayFrameEditor from '../common/OverlayFrameEditor';
 
 const ALIGNMENT_OPTIONS: Array<{ horizontal: OverlayTextAlignment['horizontal']; vertical: OverlayTextAlignment['vertical']; icon: typeof ArrowUp; label: string }> = [
@@ -51,6 +51,8 @@ let returnFromMap = false;
 export default function SettingsModal() {
     const { state, dispatch, closeModal, deleteAllPhotos, showToast } = useApp();
     const { settings, photos } = state;
+    const live=useLiveLocation();
+    const latestSettings=useRef(settings);latestSettings.current=settings;
 
     const [page,setPage]=useState<SettingsPage|null>(()=>returnFromMap?'location':null);
     const bodyRef=useRef<HTMLDivElement>(null);
@@ -87,16 +89,17 @@ export default function SettingsModal() {
 
     // Update address details when any selected location field needs them.
     useEffect(() => {
-        if (settings.locationEnabled && needsLocationDetails && settings.latitude !== null && settings.longitude !== null) {
+        if (settings.locationEnabled && settings.locationMode==='manual' && needsLocationDetails && settings.latitude !== null && settings.longitude !== null) {
             if (!settings.cachedAddress && !settings.locationDetails) {
                 fetchAddress(settings.latitude, settings.longitude);
             }
         }
-    }, [settings.locationEnabled, needsLocationDetails, settings.latitude, settings.longitude]);
+    }, [settings.locationEnabled, settings.locationMode, needsLocationDetails, settings.latitude, settings.longitude]);
 
     const fetchAddress = async (lat: number, lng: number) => {
         setLocStatus('กำลังหาที่อยู่...');
         const result = await reverseGeocodeDetails(lat, lng);
+        if(latestSettings.current.locationMode!=='manual'||latestSettings.current.latitude!==lat||latestSettings.current.longitude!==lng)return;
         if (result?.displayName || result?.details) {
             dispatch({ type: 'SET_SETTINGS', payload: { cachedAddress: result.displayName, locationDetails: result.details } });
             setLocStatus('');
@@ -110,18 +113,10 @@ export default function SettingsModal() {
         setIsLoadingGPS(true);
         setLocStatus('กำลังหาตำแหน่ง GPS...');
         try {
-            const pos = await getCurrentPosition();
-            dispatch({
-                type: 'SET_SETTINGS',
-                payload: {
-                    latitude: pos.lat,
-                    longitude: pos.lng,
-                    cachedAddress: null,
-                    locationDetails: null,
-                },
-            });
-            setLocStatus(`พบตำแหน่ง: ${pos.lat.toFixed(6)}, ${pos.lng.toFixed(6)}`);
-            showToast('ได้ตำแหน่ง GPS แล้ว', 'success');
+            if(!await requestLocationPermission())throw new Error('ไม่ได้รับอนุญาตตำแหน่ง');
+            dispatch({type:'SET_SETTINGS',payload:{locationMode:'gps'}});
+            window.dispatchEvent(new Event('timestamp-location-refresh'));
+            setLocStatus('');showToast('เปิด GPS แบบ Real-time แล้ว','success');
         } catch (e) {
             setLocStatus(`ไม่สามารถหาตำแหน่ง: ${(e as Error).message}`);
             showToast('หาตำแหน่ง GPS ไม่ได้', 'error');
@@ -140,6 +135,7 @@ export default function SettingsModal() {
                 dispatch({
                     type: 'SET_SETTINGS',
                     payload: {
+                        locationMode: 'manual',
                         latitude: result.lat,
                         longitude: result.lng,
                         cachedAddress: result.displayName,
@@ -204,7 +200,7 @@ export default function SettingsModal() {
     };
 
     const categories = [
-        {id:'time',title:'เวลาและ Timestamp',icon:Clock,description:'เวลาถ่ายภาพ · รูปแบบวันที่',value:settings.globalTimeMode==='now'?'เวลาปัจจุบัน':'กำหนดเอง'},
+        {id:'time',title:'เวลาและ Timestamp',icon:Clock,description:'เวลาถ่ายภาพ · รูปแบบวันที่',value:'เวลาปัจจุบัน'},
         {id:'location',title:'ตำแหน่ง',icon:MapPin,description:'GPS · แผนที่ · รายละเอียดที่อยู่',value:settings.locationEnabled?'เปิด':'ปิด'},
         {id:'remark',title:'Remark',icon:NotebookPen,description:'ข้อความบนภาพ · ข้อความเริ่มต้น',value:settings.showRemark?'เปิด':'ปิด'},
         {id:'download',title:'ดาวน์โหลด',icon:Download,description:'จัดการภาพหลังบันทึกไฟล์',value:settings.autoTrashAfterDownload?'ลบอัตโนมัติ':'เก็บภาพไว้'},
@@ -238,46 +234,14 @@ export default function SettingsModal() {
                         <div className="settings-category-list">{categories.slice(4,6).map(renderCategory)}</div>
                         <div className="settings-list-label">ระบบ</div>
                         <div className="settings-category-list">{categories.slice(6).map(renderCategory)}</div>
-                        <p className="settings-version">Timestamp Cam · v1.5.5</p>
+                        <p className="settings-version">Timestamp Cam · v1.5.7</p>
                     </div>}
                     {page && <div key={page} className="settings-detail">
                     {/* Time Section */}
                     {page==='time' && (
                     <div id="settings-time" className="settings-section">
                         <h3><Clock className="ui-icon" aria-hidden="true" /> เวลา (Global)</h3>
-                        <div className="settings-row">
-                            <label>ใช้เวลาปัจจุบัน</label>
-                            <button role="switch" aria-label="ใช้เวลาปัจจุบัน" aria-checked={settings.globalTimeMode === 'now'}
-                                className={`toggle ${settings.globalTimeMode === 'now' ? 'on' : ''}`}
-                                onClick={() => {
-                                    dispatch({
-                                        type: 'SET_SETTINGS',
-                                        payload: { globalTimeMode: settings.globalTimeMode === 'now' ? 'custom' : 'now' },
-                                    });
-                                }}
-                            >
-                                <span className="toggle-knob">{settings.globalTimeMode === 'now' ? <Check className="ui-icon" aria-hidden="true" /> : <X className="ui-icon" aria-hidden="true" />}</span>
-                            </button>
-                        </div>
-
-                        {settings.globalTimeMode === 'custom' && (
-                            <div className="settings-row">
-                                <label>เวลากำหนดเอง</label>
-                                <DateTimeWheelPicker
-                                    value={settings.globalCustomTime}
-                                    onChange={(globalCustomTime) => dispatch({
-                                        type: 'SET_SETTINGS',
-                                        payload: { globalCustomTime },
-                                    })}
-                                />
-                            </div>
-                        )}
-
-                        <p className="settings-note">
-                            {settings.globalTimeMode === 'now'
-                                ? 'รูปใหม่จะล็อก timestamp ตอนถ่าย/นำเข้า'
-                                : 'รูปใหม่จะใช้เวลาที่กำหนด'}
-                        </p>
+                        <p className="settings-note">รูปใหม่ใช้เวลาปัจจุบัน ณ ตอนถ่ายหรือเริ่มนำเข้าเสมอ สามารถแก้ไขเวลาเฉพาะรูปได้จากการ์ดภาพ</p>
                     </div>
                     )}
 
@@ -609,28 +573,29 @@ export default function SettingsModal() {
                                 <div className="settings-subheading">แหล่งตำแหน่ง</div>
                                 <div className="settings-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
                                     <button
-                                        className="btn btn-sm btn-secondary"
+                                        className={`btn btn-sm ${settings.locationMode==='gps'?'btn-primary':'btn-secondary'}`}
                                         onClick={handleGetGPS}
                                         disabled={busy}
                                     >
-                                        {isLoadingGPS ? <LoaderCircle className="ui-icon spinning" aria-hidden="true" /> : <LocateFixed className="ui-icon" aria-hidden="true" />} GPS ปัจจุบัน
+                                        {isLoadingGPS ? <LoaderCircle className="ui-icon spinning" aria-hidden="true" /> : <LocateFixed className="ui-icon" aria-hidden="true" />} GPS Real-time
                                     </button>
                                     <button className="btn btn-sm btn-secondary" onClick={handleOpenMap} disabled={busy}>
                                         <Map className="ui-icon" aria-hidden="true" /> เลือกบนแผนที่
                                     </button>
                                 </div>
 
+                                {settings.locationMode==='gps' && <p className="settings-note">{live.status==='ready' ? `GPS สด: ${live.lat?.toFixed(6)}, ${live.lng?.toFixed(6)}` : live.status==='waiting' ? 'กำลังหาตำแหน่ง GPS…' : 'GPS ไม่พร้อม กด GPS Real-time เพื่ออนุญาตหรือลองใหม่'}</p>}
                                 <div className="settings-row">
                                     <label>Lat</label>
                                     <input
                                         type="number"
                                         step="0.000001"
-                                        value={settings.latitude ?? ''}
+                                        value={(settings.locationMode==='gps'?live.lat:settings.latitude) ?? ''}
                                         onChange={(e) => {
                                             const val = e.target.value ? parseFloat(e.target.value) : null;
                                             dispatch({
                                                 type: 'SET_SETTINGS',
-                                                payload: { latitude: val, cachedAddress: null, locationDetails: null },
+                                                payload: { locationMode:'manual', latitude: val, longitude: settings.locationMode==='gps'?live.lng:settings.longitude, cachedAddress: null, locationDetails: null },
                                             });
                                         }}
                                         placeholder="ละติจูด"
@@ -642,12 +607,12 @@ export default function SettingsModal() {
                                     <input
                                         type="number"
                                         step="0.000001"
-                                        value={settings.longitude ?? ''}
+                                        value={(settings.locationMode==='gps'?live.lng:settings.longitude) ?? ''}
                                         onChange={(e) => {
                                             const val = e.target.value ? parseFloat(e.target.value) : null;
                                             dispatch({
                                                 type: 'SET_SETTINGS',
-                                                payload: { longitude: val, cachedAddress: null, locationDetails: null },
+                                                payload: { locationMode:'manual', longitude: val, latitude: settings.locationMode==='gps'?live.lat:settings.latitude, cachedAddress: null, locationDetails: null },
                                             });
                                         }}
                                         placeholder="ลองจิจูด"
@@ -673,9 +638,9 @@ export default function SettingsModal() {
                                 </div>
 
                                 {locStatus && <p className="settings-note">{locStatus}</p>}
-                                {settings.cachedAddress && (
+                                {(settings.locationMode==='gps'?live.address:settings.cachedAddress) && (
                                     <p className="settings-note" style={{ color: 'var(--accent)' }}>
-                                        <MapPin className="ui-icon" aria-hidden="true" /> {settings.cachedAddress}
+                                        <MapPin className="ui-icon" aria-hidden="true" /> {settings.locationMode==='gps'?live.address:settings.cachedAddress}
                                     </p>
                                 )}
                                 <div className="settings-subheading">ข้อมูลที่แสดงบนภาพ</div>

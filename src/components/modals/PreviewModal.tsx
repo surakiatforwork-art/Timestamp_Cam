@@ -392,9 +392,10 @@ export default function PreviewModal() {
         finally {releaseSnapshot(outgoing);actionLock.current=false;setIsDeleting(false);}
     };
 
-    const locationLat = photo.locationLatitude ?? state.settings.latitude;
-    const locationLng = photo.locationLongitude ?? state.settings.longitude;
-    const locationAddress = photo.locationLatitude != null && photo.locationLongitude != null ? photo.locationAddress ?? null : state.settings.cachedAddress;
+    const ownLocation=photo.locationLatitude!==undefined||photo.locationLongitude!==undefined;
+    const locationLat = ownLocation?photo.locationLatitude??null:state.settings.latitude;
+    const locationLng = ownLocation?photo.locationLongitude??null:state.settings.longitude;
+    const locationAddress = ownLocation ? photo.locationAddress ?? null : state.settings.cachedAddress;
     const locationSource = photo.locationLatitude !== undefined ? 'ตำแหน่งเฉพาะรูป' : 'ใช้ค่าจาก Settings';
 
     const outputW = state.settings.outputMode === 'original' ? photo.width : state.settings.presetSize.w;
